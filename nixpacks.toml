@@ -1,0 +1,11 @@
+[variables]
+    NIXPACKS_PHP_ROOT = "public"
+
+[phases.setup]
+    nixPkgs = ["php83", "php83Packages.composer", "nodejs_20"]
+
+[phases.build]
+    cmds = ["composer install --no-dev --no-interaction --prefer-dist", "npm install", "npm run build"]
+
+[start]
+    cmd = "php -S 0.0.0.0:8000 -t public"

@@ -25,5 +25,10 @@ class DatabaseSeeder extends Seeder
                 'password' => Hash::make('password123'),
             ]
         );
+
+        $this->call([
+            CountrySeeder::class,
+            InitialCatalogSeeder::class,
+        ]);
     }
 }

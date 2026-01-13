@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\WebhookController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\AuthController;
@@ -19,11 +20,16 @@ use App\Http\Controllers\Api\V1\SubcategoryController;
 use App\Http\Controllers\Api\V1\SendEmailController;
 use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\WishlistController;
+use App\Http\Controllers\Api\V1\DeliveryController;
+use App\Http\Controllers\Api\V1\StockEntryController;
+use App\Http\Controllers\Api\V1\StockExitController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health', function () {
         return response()->json(['status' => 200, 'responseMsg' => 'OK']);
     });
+
+    Route::get('/public/notifications', [\App\Http\Controllers\Api\V1\NotificationController::class, 'publicIndex']);
 
     Route::prefix('auth')->group(function () {
         Route::post('/signin', [AuthController::class, 'signin']);
@@ -31,12 +37,59 @@ Route::prefix('v1')->group(function () {
         Route::post('/validateSession', [AuthController::class, 'validateSession'])->middleware('auth:sanctum');
     });
 
-    Route::middleware('auth:sanctum')->get('/me', function (Request $request) {
-        return response()->json(['user' => $request->user()]);
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('/me', [UserController::class, 'me']);
+        Route::put('/me', [UserController::class, 'updateProfile']);
+
+        // Logs
+        Route::get('/admin/logs', [\App\Http\Controllers\Api\V1\LogController::class, 'auditLogs']);
+        Route::get('/dev/logs', [\App\Http\Controllers\Api\V1\LogController::class, 'systemLogs']);
+
+        // Notifications
+        Route::prefix('notifications')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Api\V1\NotificationController::class, 'index']);
+            Route::get('/{id}', [\App\Http\Controllers\Api\V1\NotificationController::class, 'show']);
+            Route::post('/', [\App\Http\Controllers\Api\V1\NotificationController::class, 'store']);
+            Route::patch('/{id}/read', [\App\Http\Controllers\Api\V1\NotificationController::class, 'update']);
+            Route::put('/{id}', [\App\Http\Controllers\Api\V1\NotificationController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\Api\V1\NotificationController::class, 'destroy']);
+            Route::post('/mark-all-read', [\App\Http\Controllers\Api\V1\NotificationController::class, 'markAllAsRead']);
+        });
+
+        // Delivery Management
+        Route::prefix('delivery')->group(function () {
+            Route::get('/personnel', [DeliveryController::class, 'personnel']);
+            Route::get('/active', [DeliveryController::class, 'activeDeliveries']);
+            Route::get('/stats', [DeliveryController::class, 'stats']);
+            Route::post('/assign/{orderId}', [DeliveryController::class, 'assignDeliveryPerson']);
+            Route::patch('/status/{orderId}', [DeliveryController::class, 'updateStatus']);
+        });
+
+        // Stock Entries Management
+        Route::prefix('stock/entries')->group(function () {
+            Route::get('/', [StockEntryController::class, 'index']);
+            Route::get('/stats', [StockEntryController::class, 'stats']);
+            Route::post('/', [StockEntryController::class, 'store']);
+            Route::get('/{stockEntry}', [StockEntryController::class, 'show']);
+            Route::put('/{stockEntry}', [StockEntryController::class, 'update']);
+            Route::delete('/{stockEntry}', [StockEntryController::class, 'destroy']);
+        });
+
+        // Stock Exits Management
+        Route::prefix('stock/exits')->group(function () {
+            Route::get('/', [StockExitController::class, 'index']);
+            Route::get('/stats', [StockExitController::class, 'stats']);
+            Route::get('/reasons', [StockExitController::class, 'reasons']);
+            Route::post('/', [StockExitController::class, 'store']);
+            Route::get('/{stockExit}', [StockExitController::class, 'show']);
+            Route::put('/{stockExit}', [StockExitController::class, 'update']);
+            Route::delete('/{stockExit}', [StockExitController::class, 'destroy']);
+        });
     });
 
     Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
         Route::get('/stats', [AdminStatsController::class, 'index']);
+        Route::get('/sales-by-country', [AdminStatsController::class, 'salesByCountry']);
     });
 
     Route::get('/settings', [SettingsController::class, 'index']);
@@ -109,9 +162,15 @@ Route::prefix('v1')->group(function () {
     Route::prefix('orders')->group(function () {
         Route::get('/', [OrderController::class, 'show'])->middleware('auth:sanctum');
         Route::get('/all', [OrderController::class, 'index']);
+        Route::get('/track/{code}', [OrderController::class, 'track']); // Public tracking
         Route::post('/checkOut/{id}', [OrderController::class, 'checkOut'])->middleware('auth:sanctum');
         Route::post('/user-cart', [OrderController::class, 'storeFromUserCart'])->middleware('auth:sanctum');
         Route::post('/{id}', [OrderController::class, 'store'])->middleware('auth:sanctum');
+    });
+
+    Route::prefix('webhooks')->group(function () {
+        Route::post('/moneroo', [WebhookController::class, 'moneroo']);
+        Route::post('/axazara', [WebhookController::class, 'axazara']);
     });
 
     Route::prefix('wishlist')->group(function () {
@@ -142,7 +201,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('/{id}', [PostController::class, 'destroy'])->middleware('auth:sanctum');
     });
 
-    Route::prefix('users')->group(function () {
+    Route::prefix('users')->middleware('auth:sanctum')->group(function () {
         Route::get('/', [UserController::class, 'index']);
         Route::post('/', [UserController::class, 'store']);
         Route::get('/getalluser', [UserController::class, 'getAllUsersSql']);

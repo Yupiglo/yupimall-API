@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Product;
+use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Validator;
@@ -51,7 +52,7 @@ class ProductController extends Controller
         }
 
         $paginator = $query->paginate($limit, ['*'], 'page', $page);
-        $products = collect($paginator->items())->map(fn (Product $p) => $this->toNodeProduct($p))->values();
+        $products = collect($paginator->items())->map(fn(Product $p) => $this->toNodeProduct($p))->values();
 
         return response()->json([
             'page' => $page,
@@ -80,7 +81,7 @@ class ProductController extends Controller
         if ($validator->fails()) {
             $details = collect($validator->errors()->messages())
                 ->map(function ($messages, $field) {
-                    return collect($messages)->map(fn ($m) => ['field' => $field, 'message' => $m])->all();
+                    return collect($messages)->map(fn($m) => ['field' => $field, 'message' => $m])->all();
                 })
                 ->flatten(1)
                 ->values();
@@ -103,6 +104,22 @@ class ProductController extends Controller
         }
 
         $product = Product::create($payload);
+
+        // Create Notification
+        \App\Models\Notification::create([
+            'title' => 'Nouveau produit',
+            'message' => "Un nouveau produit '{$product->title}' a été ajouté au catalogue.",
+            'category' => 'system',
+            'type' => 'info',
+            'metadata' => ['product_id' => $product->id]
+        ]);
+
+        ActivityLogger::log(
+            "Product Created",
+            "New product '{$product->title}' was added to category '{$product->category}'",
+            "success",
+            ['product_id' => $product->id]
+        );
 
         return response()->json([
             'message' => 'Product added successfully',
@@ -164,11 +181,18 @@ class ProductController extends Controller
         }
 
         $payload = collect($payload)
-            ->filter(fn ($v) => $v !== null && $v !== '')
+            ->filter(fn($v) => $v !== null && $v !== '')
             ->all();
 
         $product->fill($payload);
         $product->save();
+
+        ActivityLogger::log(
+            "Product Updated",
+            "Product '{$product->title}' (ID: {$product->id}) details were modified",
+            "info",
+            ['product_id' => $product->id]
+        );
 
         return response()->json([
             'message' => 'Product updated successfully',
@@ -187,6 +211,14 @@ class ProductController extends Controller
         }
 
         $product->delete();
+
+        ActivityLogger::log(
+            "Product Deleted",
+            "Product '{$product->title}' (ID: {$id}) was removed from inventory",
+            "warning",
+            ['product_id' => $id]
+        );
+
         return response()->json(['message' => 'success'], 200);
     }
 
@@ -210,7 +242,7 @@ class ProductController extends Controller
             $query->where('price', '<=', (float) $request->input('maxPrice'));
         }
 
-        $products = $query->get()->map(fn (Product $p) => $this->toNodeProduct($p))->values();
+        $products = $query->get()->map(fn(Product $p) => $this->toNodeProduct($p))->values();
 
         return response()->json([
             'message' => 'Filtered products fetched successfully',
@@ -228,7 +260,7 @@ class ProductController extends Controller
         $products = Product::query()
             ->where('category', 'like', '%' . $category . '%')
             ->get()
-            ->map(fn (Product $p) => $this->toNodeProduct($p))
+            ->map(fn(Product $p) => $this->toNodeProduct($p))
             ->values();
 
         return response()->json([
@@ -259,7 +291,7 @@ class ProductController extends Controller
             return response()->json(['message' => 'Please provide new or sale in query'], 400);
         }
 
-        $products = $filter->get()->map(fn (Product $p) => $this->toNodeProduct($p))->values();
+        $products = $filter->get()->map(fn(Product $p) => $this->toNodeProduct($p))->values();
 
         return response()->json([
             'message' => 'Special products fetched successfully',
@@ -307,7 +339,7 @@ class ProductController extends Controller
             $images = [];
         }
         $imagePaths = collect($images)
-            ->filter(fn ($v) => is_string($v) && trim($v) !== '')
+            ->filter(fn($v) => is_string($v) && trim($v) !== '')
             ->map(function ($v) {
                 $v = trim($v);
                 if (str_starts_with($v, 'uploads/') || str_starts_with($v, '/uploads/')) {

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
@@ -12,8 +13,9 @@ class UserController extends Controller
 {
     /**
      * Display a listing of the resource.
+     * Role-based filtering: dev sees all, others don't see dev users
      */
-    public function index()
+    public function index(Request $request)
     {
         $page = (int) request()->input('page', 1);
         $limit = (int) request()->input('limit', 50);
@@ -21,40 +23,94 @@ class UserController extends Controller
             $limit = 50;
         }
 
-        $paginator = User::query()->paginate($limit, ['*'], 'page', $page);
+        $query = User::query();
+
+        // Role-based filtering: non-dev users cannot see dev users
+        $currentUser = $request->user();
+        if ($currentUser && $currentUser->role !== User::ROLE_DEV) {
+            $query->where('role', '!=', User::ROLE_DEV);
+        }
+
+        // Filter by role if specified
+        if (request()->has('role')) {
+            $query->where('role', request()->input('role'));
+        }
+
+        // Search filter
+        if (request()->has('search')) {
+            $search = request()->input('search');
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'LIKE', "%{$search}%")
+                    ->orWhere('email', 'LIKE', "%{$search}%")
+                    ->orWhere('username', 'LIKE', "%{$search}%");
+            });
+        }
+
+        $paginator = $query->orderBy('created_at', 'desc')->paginate($limit, ['*'], 'page', $page);
 
         return response()->json([
             'page' => $page,
+            'total' => $paginator->total(),
+            'lastPage' => $paginator->lastPage(),
             'message' => 'success',
             'getAllUsers' => $paginator->items(),
-        ], 201);
+        ], 200);
     }
 
     /**
      * Store a newly created resource in storage.
+     * Only dev users can create other dev users
      */
     public function store(Request $request)
     {
+        $validRoles = [
+            User::ROLE_DEV,
+            User::ROLE_SUPER_ADMIN,
+            User::ROLE_WEBMASTER,
+            User::ROLE_STOCKIST,
+            User::ROLE_WAREHOUSE,
+            User::ROLE_DELIVERY,
+            User::ROLE_DISTRIBUTOR,
+            User::ROLE_CONSUMER,
+        ];
+
         $validator = Validator::make($request->all(), [
-            'name' => ['nullable', 'string'],
-            'username' => ['nullable', 'string'],
-            'email' => ['nullable', 'email'],
-            'password' => ['required', 'string'],
+            'name' => ['required', 'string', 'max:255'],
+            'username' => ['nullable', 'string', 'max:255'],
+            'email' => ['required', 'email', 'unique:users,email'],
+            'password' => ['required', 'string', 'min:6'],
+            'role' => ['required', 'string', 'in:' . implode(',', $validRoles)],
+            'phone' => ['nullable', 'string', 'max:50'],
         ]);
 
         if ($validator->fails()) {
             return response()->json(['message' => $validator->errors()->first()], 400);
         }
 
+        // Only dev users can create other dev users
+        $currentUser = $request->user();
+        $requestedRole = $request->input('role');
+        if ($requestedRole === User::ROLE_DEV && (!$currentUser || $currentUser->role !== User::ROLE_DEV)) {
+            return response()->json(['message' => 'Only dev users can create other dev users'], 403);
+        }
+
         $user = User::create([
-            'name' => $request->input('name', $request->input('username', 'user')),
+            'name' => $request->input('name'),
             'username' => $request->input('username'),
             'email' => $request->input('email'),
             'password' => Hash::make($request->input('password')),
+            'role' => $requestedRole,
+            'phone' => $request->input('phone'),
         ]);
 
+        ActivityLogger::log(
+            "User Created",
+            "New user {$user->name} ({$user->role}) created by {$currentUser->name}",
+            "info"
+        );
+
         return response()->json([
-            'message' => 'success',
+            'message' => 'User created successfully',
             'addUser' => $user,
         ], 201);
     }
@@ -77,6 +133,7 @@ class UserController extends Controller
 
     /**
      * Update the specified resource in storage.
+     * Non-dev users cannot update dev users
      */
     public function update(Request $request, string $id)
     {
@@ -85,27 +142,82 @@ class UserController extends Controller
             return response()->json(['message' => 'User was not found'], 404);
         }
 
-        $user->fill($request->only(['name', 'username', 'email']));
+        // Non-dev users cannot update dev users
+        $currentUser = $request->user();
+        if ($user->role === User::ROLE_DEV && (!$currentUser || $currentUser->role !== User::ROLE_DEV)) {
+            return response()->json(['message' => 'You do not have permission to update this user'], 403);
+        }
+
+        $validRoles = [
+            User::ROLE_DEV,
+            User::ROLE_SUPER_ADMIN,
+            User::ROLE_WEBMASTER,
+            User::ROLE_STOCKIST,
+            User::ROLE_WAREHOUSE,
+            User::ROLE_DELIVERY,
+            User::ROLE_DISTRIBUTOR,
+            User::ROLE_CONSUMER,
+        ];
+
+        $validator = Validator::make($request->all(), [
+            'name' => ['nullable', 'string', 'max:255'],
+            'username' => ['nullable', 'string', 'max:255'],
+            'email' => ['nullable', 'email'],
+            'role' => ['nullable', 'string', 'in:' . implode(',', $validRoles)],
+            'phone' => ['nullable', 'string', 'max:50'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first()], 400);
+        }
+
+        // Prevent non-dev from changing role to dev
+        $newRole = $request->input('role');
+        if ($newRole === User::ROLE_DEV && (!$currentUser || $currentUser->role !== User::ROLE_DEV)) {
+            return response()->json(['message' => 'Only dev users can assign dev role'], 403);
+        }
+
+        $user->fill($request->only(['name', 'username', 'email', 'role', 'phone']));
         $user->save();
 
         return response()->json([
-            'message' => 'success',
+            'message' => 'User updated successfully',
             'updateUser' => $user->fresh(),
-        ], 201);
+        ], 200);
     }
 
     /**
      * Remove the specified resource from storage.
+     * Non-dev users cannot delete dev users
      */
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
         $user = User::find($id);
         if (!$user) {
             return response()->json(['message' => 'User was not found'], 404);
         }
 
+        // Non-dev users cannot delete dev users
+        $currentUser = $request->user();
+        if ($user->role === User::ROLE_DEV && (!$currentUser || $currentUser->role !== User::ROLE_DEV)) {
+            return response()->json(['message' => 'You do not have permission to delete this user'], 403);
+        }
+
+        // Prevent users from deleting themselves
+        if ($currentUser && $currentUser->id === $user->id) {
+            return response()->json(['message' => 'You cannot delete your own account'], 400);
+        }
+
+        $userName = $user->name;
         $user->delete();
-        return response()->json(['message' => 'success'], 200);
+
+        ActivityLogger::log(
+            "User Deleted",
+            "User {$userName} was deleted by {$currentUser->name}",
+            "warning"
+        );
+
+        return response()->json(['message' => 'User deleted successfully'], 200);
     }
 
     public function changePassword(Request $request, string $id)
@@ -136,5 +248,65 @@ class UserController extends Controller
     {
         $users = User::all();
         return response()->json($users, 200);
+    }
+
+    /**
+     * Get the authenticated user's profile.
+     */
+    public function me(Request $request)
+    {
+        $user = $request->user();
+
+        return response()->json([
+            'message' => 'success',
+            'user' => $user,
+        ], 200);
+    }
+
+    /**
+     * Update the authenticated user's profile.
+     */
+    public function updateProfile(Request $request)
+    {
+        $user = $request->user();
+
+        $validator = Validator::make($request->all(), [
+            'name' => ['nullable', 'string', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:50'],
+            'bio' => ['nullable', 'string', 'max:1000'],
+            'gender' => ['nullable', 'in:M,F,O'],
+            'address' => ['nullable', 'string', 'max:255'],
+            'city' => ['nullable', 'string', 'max:100'],
+            'country' => ['nullable', 'string', 'max:100'],
+            'image_url' => ['nullable', 'string'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first()], 400);
+        }
+
+        $user->fill($request->only([
+            'name',
+            'phone',
+            'bio',
+            'gender',
+            'address',
+            'city',
+            'country',
+            'image_url'
+        ]));
+
+        $user->save();
+
+        ActivityLogger::log(
+            "Profile Updated",
+            "User {$user->name} updated their profile information",
+            "info"
+        );
+
+        return response()->json([
+            'message' => 'Profile updated successfully',
+            'user' => $user->fresh(),
+        ], 200);
     }
 }

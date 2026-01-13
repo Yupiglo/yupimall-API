@@ -40,7 +40,9 @@ class AuthController extends Controller
                 'username' => $user->name, // matches Node behavior that returns name as username
                 'email' => $user->email,
                 'token' => $token,
-                'role' => $user->role ?? 'user',
+                'role' => $user->role ?? 'consumer',
+                'country' => $user->country,
+                'supervisor_id' => $user->supervisor_id,
             ],
         ], 200);
     }
@@ -76,7 +78,9 @@ class AuthController extends Controller
                 'Email' => $user->email,
                 'SerialNo' => (string) $user->id,
                 'Currency' => 'USD',
-                'Role' => $user->role ?? 'user',
+                'Role' => $user->role ?? 'consumer',
+                'Country' => $user->country,
+                'SupervisorId' => $user->supervisor_id,
             ],
         ], 200);
     }

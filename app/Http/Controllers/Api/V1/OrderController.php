@@ -7,6 +7,7 @@ use App\Models\Cart;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
+use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -20,7 +21,7 @@ class OrderController extends Controller
         $orders = Order::query()->with(['items.product'])->orderByDesc('created_at')->get();
         return response()->json([
             'message' => 'success',
-            'orders' => $orders->map(fn (Order $o) => $this->toNodeOrder($o))->values(),
+            'orders' => $orders->map(fn(Order $o) => $this->toNodeOrder($o))->values(),
         ], 200);
     }
 
@@ -41,52 +42,89 @@ class OrderController extends Controller
         }
 
         $shipping = (array) $request->input('shippingAddress', []);
+        $shippingName = $shipping['name'] ?? $request->input('shipping_name');
         $shippingStreet = $shipping['street'] ?? $request->input('shipping_street');
         $shippingCity = $shipping['city'] ?? $request->input('shipping_city');
+        $shippingCountry = $shipping['country'] ?? $request->input('shipping_country');
+        $shippingZip = $shipping['zip'] ?? $request->input('shipping_zip');
         $shippingPhone = $shipping['phone'] ?? $request->input('shipping_phone');
+        $shippingEmail = $shipping['email'] ?? $request->input('shipping_email', $user->email);
 
-        $order = DB::transaction(function () use ($user, $cart, $shippingStreet, $shippingCity, $shippingPhone) {
-            $cart->loadMissing('items');
-            $total = $cart->total_price_after_discount !== null ? (float) $cart->total_price_after_discount : (float) $cart->total_price;
+        try {
+            $order = DB::transaction(function () use ($user, $cart, $shippingName, $shippingStreet, $shippingCity, $shippingCountry, $shippingZip, $shippingPhone, $shippingEmail, $request) {
+                $cart->loadMissing('items.product');
 
-            $order = Order::create([
-                'user_id' => $user->id,
-                'shipping_street' => $shippingStreet,
-                'shipping_city' => $shippingCity,
-                'shipping_phone' => $shippingPhone,
-                'payment_method' => 'cash',
-                'is_paid' => false,
-                'is_delivered' => false,
-                'order_status' => 'processing',
-                'total_order_price' => $total,
-                'order_at' => now(),
-            ]);
+                // Validation de l'inventaire avant commande
+                foreach ($cart->items as $cartItem) {
+                    if (!$cartItem->product || $cartItem->product->quantity < $cartItem->quantity) {
+                        throw new \Exception("Le produit '" . ($cartItem->product->title ?? 'Inconnu') . "' n'est plus en stock suffisant.");
+                    }
+                }
 
-            foreach ($cart->items as $cartItem) {
-                OrderItem::create([
-                    'order_id' => $order->id,
-                    'product_id' => $cartItem->product_id,
-                    'quantity' => $cartItem->quantity,
-                    'price' => $cartItem->price,
-                    'total_product_discount' => $cartItem->total_product_discount,
+                $total = $cart->total_price_after_discount !== null ? (float) $cart->total_price_after_discount : (float) $cart->total_price;
+
+                $order = Order::create([
+                    'user_id' => $user->id,
+                    'tracking_code' => Order::generateTrackingCode(),
+                    'shipping_name' => $shippingName,
+                    'shipping_street' => $shippingStreet,
+                    'shipping_city' => $shippingCity,
+                    'shipping_country' => $shippingCountry,
+                    'shipping_zip' => $shippingZip,
+                    'shipping_phone' => $shippingPhone,
+                    'shipping_email' => $shippingEmail,
+                    'distributor_id' => $request->input('distributorId'),
+                    'stockist' => $request->input('stockist'),
+                    'payment_method' => $request->input('paymentMethod', 'cash'),
+                    'is_paid' => false,
+                    'is_delivered' => false,
+                    'order_status' => 'pending',
+                    'total_order_price' => $total,
+                    'order_at' => now(),
                 ]);
 
-                Product::query()->where('id', $cartItem->product_id)->update([
-                    'quantity' => DB::raw('GREATEST(quantity - ' . ((int) $cartItem->quantity) . ', 0)'),
-                    'sold' => DB::raw('sold + ' . ((int) $cartItem->quantity)),
-                ]);
-            }
+                foreach ($cart->items as $cartItem) {
+                    OrderItem::create([
+                        'order_id' => $order->id,
+                        'product_id' => $cartItem->product_id,
+                        'quantity' => $cartItem->quantity,
+                        'price' => $cartItem->price,
+                        'total_product_discount' => $cartItem->total_product_discount,
+                    ]);
 
-            $cart->items()->delete();
-            $cart->delete();
+                    Product::query()->where('id', $cartItem->product_id)->update([
+                        'quantity' => DB::raw('GREATEST(quantity - ' . ((int) $cartItem->quantity) . ', 0)'),
+                        'sold' => DB::raw('sold + ' . ((int) $cartItem->quantity)),
+                    ]);
+                }
 
-            return $order->fresh(['items.product']);
-        });
+                $cart->items()->delete();
+                $cart->delete();
 
-        return response()->json([
-            'message' => 'success',
-            'order' => $this->toNodeOrder($order),
-        ], 201);
+                return $order->fresh(['items.product']);
+            });
+
+            // Generate Payment Link
+            $paymentService = new \App\Services\PaymentService();
+            $redirectUrl = $paymentService->initializePayment($order);
+
+            ActivityLogger::log(
+                "Order Created",
+                "User {$user->name} placed a new order #{$order->tracking_code} (Total: {$order->total_order_price}$)",
+                "success",
+                ['order_id' => $order->id, 'tracking_code' => $order->tracking_code]
+            );
+
+            return response()->json([
+                'message' => 'success',
+                'order' => $this->toNodeOrder($order),
+                'payment_url' => $redirectUrl,
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 400);
+        }
     }
 
     public function storeFromUserCart(Request $request)
@@ -103,25 +141,45 @@ class OrderController extends Controller
         }
 
         $shipping = (array) $request->input('shippingAddress', []);
+        $shippingName = $shipping['name'] ?? $request->input('shipping_name');
         $shippingStreet = $shipping['street'] ?? $request->input('shipping_street');
         $shippingCity = $shipping['city'] ?? $request->input('shipping_city');
+        $shippingCountry = $shipping['country'] ?? $request->input('shipping_country');
+        $shippingZip = $shipping['zip'] ?? $request->input('shipping_zip');
         $shippingPhone = $shipping['phone'] ?? $request->input('shipping_phone');
+        $shippingEmail = $shipping['email'] ?? $request->input('shipping_email', $user->email);
 
-        $order = DB::transaction(function () use ($user, $cart, $shippingStreet, $shippingCity, $shippingPhone) {
+        $order = DB::transaction(function () use ($user, $cart, $shippingName, $shippingStreet, $shippingCity, $shippingCountry, $shippingZip, $shippingPhone, $shippingEmail, $request) {
             $cart->loadMissing('items');
             $total = $cart->total_price_after_discount !== null ? (float) $cart->total_price_after_discount : (float) $cart->total_price;
 
             $order = Order::create([
                 'user_id' => $user->id,
+                'tracking_code' => Order::generateTrackingCode(),
+                'shipping_name' => $shippingName,
                 'shipping_street' => $shippingStreet,
                 'shipping_city' => $shippingCity,
+                'shipping_country' => $shippingCountry,
+                'shipping_zip' => $shippingZip,
                 'shipping_phone' => $shippingPhone,
-                'payment_method' => 'cash',
+                'shipping_email' => $shippingEmail,
+                'distributor_id' => $request->input('distributorId'),
+                'stockist' => $request->input('stockist'),
+                'payment_method' => $request->input('paymentMethod', 'cash'),
                 'is_paid' => false,
                 'is_delivered' => false,
                 'order_status' => 'processing',
                 'total_order_price' => $total,
                 'order_at' => now(),
+            ]);
+
+            // Create Notification
+            \App\Models\Notification::create([
+                'title' => 'Nouvelle commande',
+                'message' => "L'utilisateur {$user->name} a passé une commande de " . number_format($total, 0, ',', ' ') . " FCFA.",
+                'category' => 'order',
+                'type' => 'success',
+                'metadata' => ['order_id' => $order->id, 'tracking_code' => $order->tracking_code]
             ]);
 
             foreach ($cart->items as $cartItem) {
@@ -144,6 +202,13 @@ class OrderController extends Controller
 
             return $order->fresh(['items.product']);
         });
+
+        ActivityLogger::log(
+            "Order Created",
+            "User {$user->name} placed order #{$order->tracking_code} from cart",
+            "success",
+            ['order_id' => $order->id, 'tracking_code' => $order->tracking_code]
+        );
 
         return response()->json([
             'message' => 'success',
@@ -193,6 +258,51 @@ class OrderController extends Controller
         ], 200);
     }
 
+    /**
+     * Track an order by its tracking code (public, no auth required)
+     */
+    public function track(string $code)
+    {
+        $order = Order::query()
+            ->where('tracking_code', $code)
+            ->with(['items.product'])
+            ->first();
+
+        if (!$order) {
+            return response()->json([
+                'message' => 'Order not found',
+                'error' => 'TRACKING_NOT_FOUND',
+            ], 404);
+        }
+
+        return response()->json([
+            'message' => 'success',
+            'order' => [
+                'trackingCode' => $order->tracking_code,
+                'status' => $order->order_status,
+                'isPaid' => (bool) $order->is_paid,
+                'isDelivered' => (bool) $order->is_delivered,
+                'totalPrice' => (float) $order->total_order_price,
+                'shippingAddress' => [
+                    'name' => $order->shipping_name,
+                    'city' => $order->shipping_city,
+                    'country' => $order->shipping_country,
+                ],
+                'items' => $order->items->map(function ($item) {
+                    return [
+                        'name' => $item->product?->title ?? 'Produit',
+                        'quantity' => (int) $item->quantity,
+                        'price' => (float) $item->price,
+                        'image' => $item->product?->img_cover,
+                    ];
+                })->values(),
+                'orderedAt' => optional($order->order_at)->toISOString(),
+                'paidAt' => optional($order->paid_at)->toISOString(),
+                'deliveredAt' => optional($order->delivered_at)->toISOString(),
+            ],
+        ], 200);
+    }
+
     private function toNodeOrder(Order $order): array
     {
         $order->loadMissing(['items.product']);
@@ -219,6 +329,8 @@ class OrderController extends Controller
                 'city' => $order->shipping_city,
                 'phone' => $order->shipping_phone,
             ],
+            'distributorId' => $order->distributor_id,
+            'stockist' => $order->stockist,
             'orderStatus' => $order->order_status,
             'paymentMethod' => $order->payment_method,
             'isPaid' => (bool) $order->is_paid,

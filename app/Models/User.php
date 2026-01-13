@@ -15,6 +15,16 @@ class User extends Authenticatable
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
 
+    /** Rôles Utilisateurs */
+    const ROLE_DEV = 'dev';
+    const ROLE_SUPER_ADMIN = 'super_admin';
+    const ROLE_WEBMASTER = 'webmaster';
+    const ROLE_STOCKIST = 'stockist';
+    const ROLE_WAREHOUSE = 'warehouse';
+    const ROLE_DELIVERY = 'delivery';
+    const ROLE_DISTRIBUTOR = 'distributor';
+    const ROLE_CONSUMER = 'consumer';
+
     /**
      * The attributes that are mass assignable.
      *
@@ -24,8 +34,16 @@ class User extends Authenticatable
         'name',
         'username',
         'role',
+        'country',
+        'supervisor_id',
         'email',
         'password',
+        'phone',
+        'bio',
+        'gender',
+        'address',
+        'city',
+        'image_url',
     ];
 
     /**
@@ -74,5 +92,29 @@ class User extends Authenticatable
     public function addresses(): HasMany
     {
         return $this->hasMany(Address::class);
+    }
+
+    /**
+     * Get the supervisor (parent user)
+     */
+    public function supervisor(): HasOne
+    {
+        return $this->hasOne(User::class, 'id', 'supervisor_id');
+    }
+
+    /**
+     * Get the subordinates (managed users)
+     */
+    public function subordinates(): HasMany
+    {
+        return $this->hasMany(User::class, 'supervisor_id', 'id');
+    }
+
+    /**
+     * Check if user is an administrator (Super Admin or Dev)
+     */
+    public function isAdmin(): bool
+    {
+        return in_array($this->role, [self::ROLE_DEV, self::ROLE_SUPER_ADMIN]);
     }
 }

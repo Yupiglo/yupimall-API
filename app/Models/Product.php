@@ -16,6 +16,9 @@ class Product extends Model
         'type',
         'brand',
         'category',
+        'subcategory',
+        'category_id',
+        'subcategory_id',
         'price',
         'is_new',
         'is_sale',
@@ -25,6 +28,12 @@ class Product extends Model
         'images',
         'quantity',
         'sold',
+        'countries',
+        'benefits',
+        'ingredients',
+        'how_to_use',
+        'clinical_research',
+        'reviews',
     ];
 
     protected $casts = [
@@ -36,6 +45,10 @@ class Product extends Model
         'images' => 'array',
         'quantity' => 'integer',
         'sold' => 'integer',
+        'countries' => 'array',
+        'benefits' => 'array',
+        'ingredients' => 'array',
+        'reviews' => 'array',
     ];
 
     public function reviews(): HasMany

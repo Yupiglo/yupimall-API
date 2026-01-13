@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\V1\WishlistController;
 use App\Http\Controllers\Api\V1\DeliveryController;
 use App\Http\Controllers\Api\V1\StockEntryController;
 use App\Http\Controllers\Api\V1\StockExitController;
+use App\Http\Controllers\Api\V1\CountryController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health', function () {
@@ -94,6 +95,7 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/settings', [SettingsController::class, 'index']);
     Route::get('/settings/general', [SettingsController::class, 'general']);
+    Route::get('/countries', [CountryController::class, 'index']);
 
     Route::prefix('products')->group(function () {
         Route::get('/', [ProductController::class, 'index']);

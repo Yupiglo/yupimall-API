@@ -30,7 +30,21 @@ class ProductController extends Controller
         }
 
         if (request()->filled('category')) {
-            $query->where('category', 'like', '%' . request()->string('category')->toString() . '%');
+            $cat = request()->input('category');
+            if (is_numeric($cat)) {
+                $query->where('category_id', $cat);
+            } else {
+                $query->where('category', 'like', '%' . $cat . '%');
+            }
+        }
+
+        if (request()->filled('subcategory')) {
+            $sub = request()->input('subcategory');
+            if (is_numeric($sub)) {
+                $query->where('subcategory_id', $sub);
+            } else {
+                $query->where('subcategory', 'like', '%' . $sub . '%');
+            }
         }
 
         if (request()->filled('brand')) {
@@ -101,6 +115,29 @@ class ProductController extends Controller
         if (isset($payload['variants']) && is_string($payload['variants'])) {
             $decoded = json_decode($payload['variants'], true);
             $payload['variants'] = is_array($decoded) ? $decoded : [];
+        }
+
+        foreach (['benefits', 'ingredients', 'reviews', 'countries'] as $f) {
+            if (isset($payload[$f]) && is_string($payload[$f])) {
+                $decoded = json_decode($payload[$f], true);
+                $payload[$f] = is_array($decoded) ? $decoded : ($decoded ?: []);
+            }
+        }
+
+        // Hierarchy resolution
+        if (isset($payload['category']) && is_numeric($payload['category'])) {
+            $cat = \App\Models\Category::find($payload['category']);
+            if ($cat) {
+                $payload['category_id'] = $cat->id;
+                $payload['category'] = $cat->slug;
+            }
+        }
+        if (isset($payload['subcategory']) && is_numeric($payload['subcategory'])) {
+            $sub = \App\Models\Subcategory::find($payload['subcategory']);
+            if ($sub) {
+                $payload['subcategory_id'] = $sub->id;
+                $payload['subcategory'] = $sub->slug;
+            }
         }
 
         $product = Product::create($payload);
@@ -180,6 +217,30 @@ class ProductController extends Controller
             $payload['variants'] = is_array($decoded) ? $decoded : [];
         }
 
+        foreach (['benefits', 'ingredients', 'reviews', 'countries'] as $f) {
+            if (isset($payload[$f]) && is_string($payload[$f])) {
+                $decoded = json_decode($payload[$f], true);
+                $payload[$f] = is_array($decoded) ? $decoded : ($decoded ?: []);
+            }
+        }
+
+        // Hierarchy resolution
+        if (isset($payload['category']) && is_numeric($payload['category'])) {
+            $cat = \App\Models\Category::find($payload['category']);
+            if ($cat) {
+                $payload['category_id'] = $cat->id;
+                $payload['category'] = $cat->slug;
+            }
+        }
+        if (isset($payload['subcategory']) && is_numeric($payload['subcategory'])) {
+            $sub = \App\Models\Subcategory::find($payload['subcategory']);
+            if ($sub) {
+                $payload['subcategory_id'] = $sub->id;
+                $payload['subcategory'] = $sub->slug;
+            }
+        }
+
+
         $payload = collect($payload)
             ->filter(fn($v) => $v !== null && $v !== '')
             ->all();
@@ -227,7 +288,21 @@ class ProductController extends Controller
         $query = Product::query();
 
         if ($request->filled('category')) {
-            $query->where('category', 'like', '%' . $request->string('category')->toString() . '%');
+            $cat = $request->input('category');
+            if (is_numeric($cat)) {
+                $query->where('category_id', $cat);
+            } else {
+                $query->where('category', 'like', '%' . $cat . '%');
+            }
+        }
+
+        if ($request->filled('subcategory')) {
+            $sub = $request->input('subcategory');
+            if (is_numeric($sub)) {
+                $query->where('subcategory_id', $sub);
+            } else {
+                $query->where('subcategory', 'like', '%' . $sub . '%');
+            }
         }
 
         if ($request->filled('brand')) {
@@ -331,7 +406,7 @@ class ProductController extends Controller
     {
         $cover = $product->img_cover;
         $coverPath = is_string($cover) && $cover !== ''
-            ? (str_starts_with($cover, 'uploads/') || str_starts_with($cover, '/uploads/') ? $cover : ('uploads/products/' . $cover))
+            ? (str_starts_with($cover, 'uploads/') || str_starts_with($cover, '/uploads/') ? $cover : ('uploads/products/' . ltrim($cover, '/')))
             : null;
 
         $images = $product->images ?? [];
@@ -345,7 +420,7 @@ class ProductController extends Controller
                 if (str_starts_with($v, 'uploads/') || str_starts_with($v, '/uploads/')) {
                     return $v;
                 }
-                return 'uploads/products/' . $v;
+                return 'uploads/products/' . ltrim($v, '/');
             })
             ->values()
             ->all();
@@ -357,6 +432,10 @@ class ProductController extends Controller
             'type' => $product->type,
             'brand' => $product->brand,
             'category' => $product->category,
+            'subcategory' => $product->subcategory,
+            'subcategoryName' => $product->subcategory_id ? (\App\Models\Subcategory::find($product->subcategory_id)->name ?? $product->subcategory) : $product->subcategory,
+            'categoryId' => (string) $product->category_id,
+            'subcategoryId' => (string) $product->subcategory_id,
             'price' => (float) $product->price,
             'new' => (bool) $product->is_new,
             'sale' => (bool) $product->is_sale,
@@ -364,6 +443,12 @@ class ProductController extends Controller
             'imgCover' => $coverPath,
             'variants' => $product->variants ?? [],
             'images' => $imagePaths,
+            'countries' => $product->countries ?? ['ALL'],
+            'benefits' => $product->benefits ?? [],
+            'ingredients' => $product->ingredients ?? [],
+            'howToUse' => $product->how_to_use,
+            'clinicalResearch' => $product->clinical_research,
+            'reviewsData' => $product->reviews ?? [], // Using reviewsData to avoid conflict with relation
             'quantity' => (int) $product->quantity,
             'sold' => (int) $product->sold,
             'createdAt' => optional($product->created_at)->toISOString(),

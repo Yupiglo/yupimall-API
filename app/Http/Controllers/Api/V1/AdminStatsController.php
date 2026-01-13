@@ -151,12 +151,13 @@ class AdminStatsController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        // Get orders grouped by user's country
+        // Get orders grouped by country entitiy
         $salesByCountry = Order::query()
             ->join('users', 'orders.user_id', '=', 'users.id')
+            ->join('countries', 'users.country_id', '=', 'countries.id')
             ->where('orders.is_paid', true)
-            ->selectRaw('users.country, COUNT(orders.id) as orders_count, SUM(orders.total_order_price) as total_revenue')
-            ->groupBy('users.country')
+            ->selectRaw('countries.name as country, COUNT(orders.id) as orders_count, SUM(orders.total_order_price) as total_revenue')
+            ->groupBy('countries.name')
             ->orderByDesc('total_revenue')
             ->get()
             ->map(function ($row) {

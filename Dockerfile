@@ -11,7 +11,8 @@ RUN apk add --no-cache \
     oniguruma-dev \
     libzip-dev \
     icu-dev \
-    postgresql-dev
+    postgresql-dev \
+    libpq
 
 # Install PHP extensions
 RUN docker-php-ext-install pdo_mysql pdo_pgsql mbstring exif pcntl bcmath gd zip intl

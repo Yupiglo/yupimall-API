@@ -28,6 +28,7 @@ class Order extends Model
         'order_at',
         'paid_at',
         'delivered_at',
+        'payment_proof',
         'delivery_person_id',
     ];
 

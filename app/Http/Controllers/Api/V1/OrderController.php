@@ -7,7 +7,10 @@ use App\Models\Cart;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
+use App\Models\Notification;
 use App\Services\ActivityLogger;
+use App\Events\OrderCreated;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -16,9 +19,19 @@ class OrderController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $orders = Order::query()->with(['items.product'])->orderByDesc('created_at')->get();
+        $user = $request->user();
+        $query = Order::query()->with(['items.product', 'user']);
+
+        if ($user->role === 'warehouse') {
+            $query->where('shipping_country', $user->country);
+        } elseif ($user->role === 'stockist') {
+            $query->where('stockist_id', $user->id);
+        }
+
+        $orders = $query->orderByDesc('created_at')->get();
+
         return response()->json([
             'message' => 'success',
             'orders' => $orders->map(fn(Order $o) => $this->toNodeOrder($o))->values(),
@@ -173,14 +186,32 @@ class OrderController extends Controller
                 'order_at' => now(),
             ]);
 
-            // Create Notification
-            \App\Models\Notification::create([
-                'title' => 'Nouvelle commande',
-                'message' => "L'utilisateur {$user->name} a passé une commande de " . number_format($total, 0, ',', ' ') . " FCFA.",
+            // Create Notifications for various roles
+            $notificationData = [
                 'category' => 'order',
                 'type' => 'success',
                 'metadata' => ['order_id' => $order->id, 'tracking_code' => $order->tracking_code]
-            ]);
+            ];
+
+            // 1. Notify the country Warehouse (if applicable)
+            $orderCountry = $order->shipping_country ?? $user->country;
+            if ($orderCountry) {
+                // Find warehouse for this country
+                $warehouse = \App\Models\User::where('role', 'warehouse')->where('country', $orderCountry)->first();
+                if ($warehouse) {
+                    \App\Models\Notification::create(array_merge($notificationData, [
+                        'title' => 'Nouvelle commande ' . ($user->role === 'stockist' ? 'Stockiste' : 'Client'),
+                        'message' => "Une nouvelle commande (#{$order->tracking_code}) est arrivée pour votre pays.",
+                        'user_id' => $warehouse->id
+                    ]));
+                }
+            }
+
+            // 2. Notify Admin/Dev/Webmaster (Global)
+            \App\Models\Notification::create(array_merge($notificationData, [
+                'title' => 'Commande Reçue: ' . ($user->role === 'warehouse' ? 'Warehouse' : ($user->role === 'stockist' ? 'Stockist' : 'Client')),
+                'message' => "Commande #{$order->tracking_code} passée par {$user->name} ({$user->role}).",
+            ]));
 
             foreach ($cart->items as $cartItem) {
                 OrderItem::create([
@@ -200,8 +231,12 @@ class OrderController extends Controller
             $cart->items()->delete();
             $cart->delete();
 
-            return $order->fresh(['items.product']);
+            return $order->fresh(['items.product', 'user']);
         });
+
+        // Generate Payment Link
+        $paymentService = new \App\Services\PaymentService();
+        $redirectUrl = $paymentService->initializePayment($order);
 
         ActivityLogger::log(
             "Order Created",
@@ -210,9 +245,13 @@ class OrderController extends Controller
             ['order_id' => $order->id, 'tracking_code' => $order->tracking_code]
         );
 
+        // Broadcast event for real-time notifications
+        broadcast(new OrderCreated($order))->toOthers();
+
         return response()->json([
             'message' => 'success',
             'order' => $this->toNodeOrder($order),
+            'payment_url' => $redirectUrl,
         ], 201);
     }
 
@@ -222,24 +261,51 @@ class OrderController extends Controller
     public function show(Request $request)
     {
         $user = $request->user();
-        $order = Order::query()
+        $orders = Order::query()
             ->where('user_id', $user->id)
             ->with(['items.product'])
             ->orderByDesc('created_at')
-            ->first();
+            ->get();
 
         return response()->json([
             'message' => 'success',
-            'order' => $order ? $this->toNodeOrder($order) : null,
+            'orders' => $orders->map(fn($o) => $this->toNodeOrder($o))->values(),
         ], 200);
     }
 
     /**
      * Update the specified resource in storage.
      */
+    /**
+     * Update the specified resource in storage.
+     */
     public function update(Request $request, string $id)
     {
-        return response()->json(['message' => 'Not Implemented'], 501);
+        $order = Order::find($id);
+
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        $oldStatus = $order->order_status;
+
+        $order->update($request->only([
+            'order_status',
+            'is_paid',
+            'is_delivered',
+            'payment_method'
+        ]));
+
+        // Handle Status Change Notifications
+        if ($oldStatus !== $order->order_status) {
+            $this->handleStatusNotification($order);
+            broadcast(new \App\Events\OrderStatusUpdated($order))->toOthers();
+        }
+
+        return response()->json([
+            'message' => 'Order updated successfully',
+            'order' => $this->toNodeOrder($order),
+        ]);
     }
 
     /**
@@ -247,7 +313,127 @@ class OrderController extends Controller
      */
     public function destroy(string $id)
     {
-        return response()->json(['message' => 'Not Implemented'], 501);
+        $order = Order::find($id);
+
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        // Return items to stock? Usually canceling an order returns items.
+        // If deleting, we might want to return stock if order wasn't completed.
+        // For simplicity, we just delete.
+        $order->items()->delete();
+        $order->delete();
+
+        return response()->json(['message' => 'Order deleted successfully']);
+    }
+
+    public function uploadProof(Request $request, string $id)
+    {
+        $request->validate([
+            'proof' => 'required|image|max:5120', // 5MB max
+        ]);
+
+        $order = Order::find($id);
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        if ($request->hasFile('proof')) {
+            $path = $request->file('proof')->store('proofs', 'public');
+            $order->payment_proof = $path;
+            $order->save();
+        }
+
+        return response()->json([
+            'message' => 'Proof uploaded successfully',
+            'path' => $order->payment_proof,
+        ]);
+    }
+
+    private function handleStatusNotification(Order $order)
+    {
+        $title = "Mise à jour Commande #{$order->tracking_code}";
+        $message = "";
+        $type = "info";
+        $targetUserIds = []; // Specific users to notify
+
+        switch ($order->order_status) {
+            case 'validated':
+                $message = "Commande validée ! En attente de transit vers le Warehouse.";
+                $type = "success";
+                // Notify country Warehouse
+                if ($order->shipping_country) {
+                    $warehouse = User::where('role', 'warehouse')->where('country', $order->shipping_country)->first();
+                    if ($warehouse)
+                        $targetUserIds[] = $warehouse->id;
+                }
+                break;
+            case 'reached_warehouse':
+                $message = "La commande est arrivée au Warehouse central du pays.";
+                // Notify Admin/Webmaster (global) + Stockist if assigned
+                if ($order->stockist) {
+                    $stockistUser = User::find($order->stockist);
+                    if ($stockistUser)
+                        $targetUserIds[] = $stockistUser->id;
+                }
+                break;
+            case 'shipped_to_stockist':
+                $message = "La commande a quitté le Warehouse et est en route vers le point de retrait.";
+                if ($order->stockist) {
+                    $stockistUser = User::find($order->stockist);
+                    if ($stockistUser)
+                        $targetUserIds[] = $stockistUser->id;
+                }
+                break;
+            case 'reached_stockist':
+                $message = "La commande est arrivée chez votre Stockiste. Vous pouvez aller la récupérer !";
+                $type = "success";
+                if ($order->stockist) {
+                    $stockistUser = User::find($order->stockist);
+                    if ($stockistUser)
+                        $targetUserIds[] = $stockistUser->id;
+                }
+                break;
+            case 'out_for_delivery':
+                $message = "Le livreur a récupéré votre commande. Livraison imminente !";
+                break;
+            case 'delivered':
+                $message = "Commande livrée avec succès. Merci !";
+                $type = "success";
+                break;
+            case 'canceled':
+                $message = "Commande annulée.";
+                $type = "error";
+                break;
+        }
+
+        if ($message) {
+            // Global Notification for Admin/Dev/Webmaster
+            Notification::create([
+                'title' => $title,
+                'message' => $message,
+                'category' => 'order',
+                'type' => $type,
+                'user_id' => null, // Global
+                'metadata' => ['order_id' => $order->id, 'tracking_code' => $order->tracking_code, 'status' => $order->order_status]
+            ]);
+
+            // Specific Notifications for Warehouse/Stockist/Client
+            $userIdsToNotify = array_unique(array_merge($targetUserIds, [$order->user_id]));
+            foreach ($userIdsToNotify as $uid) {
+                if (!$uid)
+                    continue;
+                Notification::create([
+                    'title' => $title,
+                    'message' => $message,
+                    'category' => 'order',
+                    'type' => $type,
+                    'user_id' => $uid,
+                    'metadata' => ['order_id' => $order->id, 'tracking_code' => $order->tracking_code, 'status' => $order->order_status]
+                ]);
+            }
+        }
     }
 
     public function checkOut(Request $request, string $id)
@@ -256,6 +442,33 @@ class OrderController extends Controller
             'message' => 'success',
             'sessions' => null,
         ], 200);
+    }
+
+    /**
+     * Search an order by tracking code (Authenticated)
+     */
+    public function searchByCode(Request $request, string $code)
+    {
+        $user = $request->user();
+        $query = Order::query()->where('tracking_code', $code)->with(['items.product', 'user']);
+
+        // Data segregation
+        if ($user->role === 'warehouse') {
+            $query->where('shipping_country', $user->country);
+        } elseif ($user->role === 'stockist') {
+            $query->where('stockist', $user->id);
+        }
+
+        $order = $query->first();
+
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        return response()->json([
+            'message' => 'success',
+            'order' => $this->toNodeOrder($order),
+        ]);
     }
 
     /**
@@ -340,6 +553,8 @@ class OrderController extends Controller
             'totalOrderPrice' => (float) $order->total_order_price,
             'createdAt' => optional($order->created_at)->toISOString(),
             'updatedAt' => optional($order->updated_at)->toISOString(),
+            'paymentProof' => $order->payment_proof,
+            'tracking_code' => $order->tracking_code,
         ];
     }
 }

@@ -34,11 +34,17 @@ class Product extends Model
         'how_to_use',
         'clinical_research',
         'reviews',
+        'pv',
+        'discount_percentage',
+        'sort_order',
     ];
 
     protected $casts = [
+        'sort_order' => 'integer',
         'price' => 'decimal:2',
         'discount' => 'decimal:2',
+        'pv' => 'decimal:2',
+        'discount_percentage' => 'decimal:2',
         'is_new' => 'boolean',
         'is_sale' => 'boolean',
         'variants' => 'array',

@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 
 class ProductController extends Controller
 {
@@ -17,7 +18,7 @@ class ProductController extends Controller
      */
     public function index()
     {
-        $query = Product::query();
+        $query = Product::query()->orderBy('sort_order', 'asc');
 
         if (request()->filled('q')) {
             $q = trim(request()->string('q')->toString());
@@ -90,6 +91,8 @@ class ProductController extends Controller
             'description' => ['required', 'string'],
             'category' => ['required', 'string'],
             'price' => ['required', 'numeric'],
+            'pv' => ['nullable', 'numeric'],
+            'discountPercentage' => ['nullable', 'numeric'],
         ]);
 
         if ($validator->fails()) {
@@ -141,6 +144,18 @@ class ProductController extends Controller
         }
 
         $product = Product::create($payload);
+
+        // Create initial Stock Entry if quantity > 0
+        if ($product->quantity > 0) {
+            \App\Models\StockEntry::create([
+                'product_id' => $product->id,
+                'user_id' => $request->user() ? $request->user()->id : null,
+                'quantity' => $product->quantity,
+                'unit_price' => $product->price,
+                'notes' => 'Stock initial (Création produit)',
+                'reference' => 'INIT-' . strtoupper(Str::random(6)),
+            ]);
+        }
 
         // Create Notification
         \App\Models\Notification::create([
@@ -451,6 +466,8 @@ class ProductController extends Controller
             'reviewsData' => $product->reviews ?? [], // Using reviewsData to avoid conflict with relation
             'quantity' => (int) $product->quantity,
             'sold' => (int) $product->sold,
+            'pv' => (float) $product->pv,
+            'discountPercentage' => (float) $product->discount_percentage,
             'createdAt' => optional($product->created_at)->toISOString(),
             'updatedAt' => optional($product->updated_at)->toISOString(),
         ];
@@ -493,5 +510,42 @@ class ProductController extends Controller
         $name = Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
         $file->move($dir, $name);
         return $name;
+    }
+
+    public function reorder(Request $request)
+    {
+        $request->validate([
+            'items' => 'required|array',
+            'items.*.id' => 'required',
+            'items.*.sort_order' => 'required|integer',
+        ]);
+
+        $items = $request->input('items');
+
+        DB::transaction(function () use ($items) {
+            foreach ($items as $item) {
+                Product::where('id', $item['id'])->update(['sort_order' => $item['sort_order']]);
+            }
+        });
+
+        return response()->json(['message' => 'Products reordered successfully']);
+    }
+
+    public function shuffle()
+    {
+        $products = Product::all();
+        $products->each(function ($product) {
+            $product->sort_order = rand(0, 10000);
+            $product->save();
+        });
+
+        // Re-number sequentially to avoid gaps/duplicates confusion slightly (optional, but clean)
+        $sorted = Product::orderBy('sort_order')->get();
+        foreach ($sorted as $index => $product) {
+            $product->sort_order = $index;
+            $product->save();
+        }
+
+        return response()->json(['message' => 'Products shuffled successfully']);
     }
 }

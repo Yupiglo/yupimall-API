@@ -24,6 +24,8 @@ use App\Http\Controllers\Api\V1\DeliveryController;
 use App\Http\Controllers\Api\V1\StockEntryController;
 use App\Http\Controllers\Api\V1\StockExitController;
 use App\Http\Controllers\Api\V1\CountryController;
+use App\Http\Controllers\Api\V1\RegistrationController;
+use App\Http\Controllers\Api\V1\OperationalStatsController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health', function () {
@@ -32,10 +34,16 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/public/notifications', [\App\Http\Controllers\Api\V1\NotificationController::class, 'publicIndex']);
 
+    // Registration (public)
+    Route::post('/registrations', [RegistrationController::class, 'store']);
+
     Route::prefix('auth')->group(function () {
         Route::post('/signin', [AuthController::class, 'signin']);
         Route::post('/loginWithYupi', [AuthController::class, 'loginWithYupi']);
         Route::post('/validateSession', [AuthController::class, 'validateSession'])->middleware('auth:sanctum');
+        Route::post('/refresh-token', function () {
+            return response()->json(['message' => 'Not implemented in Sanctum, tokens are long-lived or handled via re-auth'], 200);
+        });
     });
 
     Route::middleware('auth:sanctum')->group(function () {
@@ -86,6 +94,8 @@ Route::prefix('v1')->group(function () {
             Route::put('/{stockExit}', [StockExitController::class, 'update']);
             Route::delete('/{stockExit}', [StockExitController::class, 'destroy']);
         });
+
+        Route::get('/operational-stats', [OperationalStatsController::class, 'index']);
     });
 
     Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
@@ -99,6 +109,8 @@ Route::prefix('v1')->group(function () {
 
     Route::prefix('products')->group(function () {
         Route::get('/', [ProductController::class, 'index']);
+        Route::post('/reorder', [ProductController::class, 'reorder'])->middleware('auth:sanctum');
+        Route::post('/shuffle', [ProductController::class, 'shuffle'])->middleware('auth:sanctum');
         Route::post('/', [ProductController::class, 'store'])->middleware('auth:sanctum');
 
         Route::get('/special', [ProductController::class, 'special']);
@@ -165,9 +177,13 @@ Route::prefix('v1')->group(function () {
         Route::get('/', [OrderController::class, 'show'])->middleware('auth:sanctum');
         Route::get('/all', [OrderController::class, 'index']);
         Route::get('/track/{code}', [OrderController::class, 'track']); // Public tracking
+        Route::get('/search/{code}', [OrderController::class, 'searchByCode'])->middleware('auth:sanctum');
         Route::post('/checkOut/{id}', [OrderController::class, 'checkOut'])->middleware('auth:sanctum');
         Route::post('/user-cart', [OrderController::class, 'storeFromUserCart'])->middleware('auth:sanctum');
         Route::post('/{id}', [OrderController::class, 'store'])->middleware('auth:sanctum');
+        Route::put('/{id}', [OrderController::class, 'update'])->middleware('auth:sanctum');
+        Route::delete('/{id}', [OrderController::class, 'destroy'])->middleware('auth:sanctum');
+        Route::post('/{id}/upload-proof', [OrderController::class, 'uploadProof'])->middleware('auth:sanctum');
     });
 
     Route::prefix('webhooks')->group(function () {
@@ -212,6 +228,13 @@ Route::prefix('v1')->group(function () {
         Route::put('/{id}', [UserController::class, 'update']);
         Route::delete('/{id}', [UserController::class, 'destroy']);
         Route::patch('/{id}', [UserController::class, 'changePassword']);
+    });
+
+    Route::prefix('registrations')->middleware('auth:sanctum')->group(function () {
+        Route::get('/', [RegistrationController::class, 'index']);
+        Route::get('/{id}', [RegistrationController::class, 'show']);
+        Route::put('/{id}', [RegistrationController::class, 'update']);
+        Route::delete('/{id}', [RegistrationController::class, 'destroy']);
     });
 
     Route::prefix('sendemail')->group(function () {

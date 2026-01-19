@@ -31,9 +31,22 @@ class UserController extends Controller
             $query->where('role', '!=', User::ROLE_DEV);
         }
 
+        // Warehouse filtering: can only see people in their country or their subordinates
+        if ($currentUser && $currentUser->role === User::ROLE_WAREHOUSE) {
+            $query->where(function ($q) use ($currentUser) {
+                $q->where('country', $currentUser->country)
+                    ->orWhere('supervisor_id', $currentUser->id);
+            });
+        }
+
         // Filter by role if specified
         if (request()->has('role')) {
             $query->where('role', request()->input('role'));
+        }
+
+        // Filter by supervisor if specified
+        if (request()->has('supervisor_id')) {
+            $query->where('supervisor_id', request()->input('supervisor_id'));
         }
 
         // Search filter
@@ -81,6 +94,8 @@ class UserController extends Controller
             'password' => ['required', 'string', 'min:6'],
             'role' => ['required', 'string', 'in:' . implode(',', $validRoles)],
             'phone' => ['nullable', 'string', 'max:50'],
+            'country' => ['nullable', 'string', 'max:100'],
+            'supervisor_id' => ['nullable', 'exists:users,id'],
         ]);
 
         if ($validator->fails()) {
@@ -94,6 +109,14 @@ class UserController extends Controller
             return response()->json(['message' => 'Only dev users can create other dev users'], 403);
         }
 
+        // Logical defaults for Warehouse creating users
+        $country = $request->input('country');
+        $supervisorId = $request->input('supervisor_id');
+        if ($currentUser && $currentUser->role === User::ROLE_WAREHOUSE) {
+            $country = $currentUser->country;
+            $supervisorId = $currentUser->id;
+        }
+
         $user = User::create([
             'name' => $request->input('name'),
             'username' => $request->input('username'),
@@ -101,6 +124,8 @@ class UserController extends Controller
             'password' => Hash::make($request->input('password')),
             'role' => $requestedRole,
             'phone' => $request->input('phone'),
+            'country' => $country,
+            'supervisor_id' => $supervisorId,
         ]);
 
         ActivityLogger::log(
@@ -165,6 +190,8 @@ class UserController extends Controller
             'email' => ['nullable', 'email'],
             'role' => ['nullable', 'string', 'in:' . implode(',', $validRoles)],
             'phone' => ['nullable', 'string', 'max:50'],
+            'country' => ['nullable', 'string', 'max:100'],
+            'supervisor_id' => ['nullable', 'exists:users,id'],
         ]);
 
         if ($validator->fails()) {
@@ -177,7 +204,7 @@ class UserController extends Controller
             return response()->json(['message' => 'Only dev users can assign dev role'], 403);
         }
 
-        $user->fill($request->only(['name', 'username', 'email', 'role', 'phone']));
+        $user->fill($request->only(['name', 'username', 'email', 'role', 'phone', 'country', 'supervisor_id']));
         $user->save();
 
         return response()->json([

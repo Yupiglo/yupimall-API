@@ -19,28 +19,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => [
-        'http://localhost:3000',
-        'http://localhost:3001',
-        'http://localhost:3002',
-        'http://localhost:3003',
-        'http://localhost:3400',
-        'http://localhost:5000',
-        'http://localhost:6001',
-        'http://localhost:7000',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:3001',
-        'http://127.0.0.1:3002',
-        'http://127.0.0.1:3003',
-        'http://127.0.0.1:3400',
-        'http://127.0.0.1:5000',
-        'http://192.168.1.83:3000',
-        'http://192.168.1.83:3001',
-        'http://192.168.1.83:3002',
-        'http://192.168.1.83:5000',
-        'http://192.168.1.83:6001',
-        'http://192.168.1.83:7000',
-    ],
+    'allowed_origins' => explode(',', env('CORS_ALLOWED_ORIGINS', '*')),
 
     'allowed_origins_patterns' => [],
 

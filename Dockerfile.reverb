@@ -1,39 +1,39 @@
-FROM php:8.3-cli
+FROM php:8.3-fpm-alpine
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apk add --no-cache \
     git \
     curl \
     libpng-dev \
-    libonig-dev \
     libxml2-dev \
     zip \
     unzip \
-    libsqlite3-dev \
-    && docker-php-ext-install pdo pdo_sqlite mbstring exif pcntl bcmath gd \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    oniguruma-dev \
+    libzip-dev \
+    icu-dev \
+    postgresql-dev \
+    libpq
 
-# Install Composer
+# Install PHP extensions
+RUN docker-php-ext-install pdo_mysql pdo_pgsql mbstring exif pcntl bcmath gd zip intl
+
+# Get latest Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 # Set working directory
 WORKDIR /var/www
 
-# Copy composer files first for better caching
-COPY composer.json composer.lock ./
+# Copy existing application directory contents
+COPY . /var/www
 
-# Install PHP dependencies without scripts
-RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
+# Install dependencies
+RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
-# Copy application files
-COPY . .
+# Set permissions
+RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache
 
-# Run composer again to generate autoloader
-RUN composer dump-autoload --optimize
-
-# Expose Reverb port
+# Expose port (Reverb default)
 EXPOSE 8080
 
-# Start Reverb server
-CMD ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080"]
+# Start Reverb
+CMD php artisan reverb:start --host=0.0.0.0 --port=8080

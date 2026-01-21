@@ -28,18 +28,26 @@ class OperationalStatsController extends Controller
 
     private function getWarehouseStats($user)
     {
-        $country = $user->country;
+        // Get the country name from the country relationship
+        $countryName = $user->country?->name;
+
+        if (!$countryName) {
+            return response()->json([
+                'status' => 400,
+                'message' => 'User country not configured. Please contact an administrator.',
+            ], 400);
+        }
 
         // Base query for orders in this warehouse's country
-        $orderQuery = Order::query()->where('shipping_country', $country);
+        $orderQuery = Order::query()->where('shipping_country', $countryName);
 
         $stats = [
             'totalOrders' => $orderQuery->count(),
             'pendingOrders' => (clone $orderQuery)->where('order_status', 'pending')->count(),
             'validatedOrders' => (clone $orderQuery)->where('order_status', 'validated')->count(),
             'revenue' => (float) (clone $orderQuery)->where('is_paid', true)->sum('total_order_price'),
-            'totalStockists' => User::where('role', 'stockist')->where('country', $country)->count(),
-            'totalConsumers' => User::where('role', 'consumer')->where('country', $country)->count(),
+            'totalStockists' => User::where('role', 'stockist')->whereHas('country', fn($q) => $q->where('name', $countryName))->count(),
+            'totalConsumers' => User::where('role', 'consumer')->whereHas('country', fn($q) => $q->where('name', $countryName))->count(),
         ];
 
         $recentOrders = (clone $orderQuery)
@@ -56,11 +64,72 @@ class OperationalStatsController extends Controller
             ->get()
             ->map($this->formatDelivery());
 
+        // Top 5 Customers (users with most orders) - exclude admin and warehouse roles
+        $excludedRoles = ['dev', 'super_admin', 'webmaster', 'warehouse'];
+        $topCustomers = User::select('users.*', DB::raw('COUNT(orders.id) as order_count'), DB::raw('SUM(orders.total_order_price) as total_spent'))
+            ->leftJoin('orders', 'users.id', '=', 'orders.user_id')
+            ->where('orders.shipping_country', $countryName)
+            ->whereNotIn('users.role', $excludedRoles)
+            ->groupBy('users.id')
+            ->orderByDesc('order_count')
+            ->limit(5)
+            ->get()
+            ->map(fn($u) => [
+                'id' => $u->id,
+                'title' => $u->name,
+                'subtitle' => ($u->order_count ?? 0) . ' commandes',
+                'value' => number_format($u->total_spent ?? 0, 0, ',', ' ') . ' CFA',
+                'image' => $u->image_url,
+            ]);
+
+        // Top 5 Couriers (delivery personnel with most deliveries)
+        $topCouriers = User::select('users.*', DB::raw('COUNT(orders.id) as delivery_count'))
+            ->leftJoin('orders', 'users.id', '=', 'orders.delivery_person_id')
+            ->where('users.role', 'delivery')
+            ->where('orders.order_status', 'delivered')
+            ->groupBy('users.id')
+            ->orderByDesc('delivery_count')
+            ->limit(5)
+            ->get()
+            ->map(fn($u) => [
+                'id' => $u->id,
+                'title' => $u->name,
+                'subtitle' => ($u->delivery_count ?? 0) . ' livraisons',
+                'value' => 'Actif',
+                'image' => $u->image_url,
+            ]);
+
+        // Recent Registrations
+        $recentRegistrations = \App\Models\Registration::orderByDesc('created_at')
+            ->limit(5)
+            ->get()
+            ->map(fn($r) => [
+                'id' => $r->id,
+                'title' => $r->first_name . ' ' . $r->last_name,
+                'subtitle' => $r->email,
+                'badge' => ucfirst($r->status),
+                'badgeColor' => $r->status === 'approved' ? 'success' : ($r->status === 'pending' ? 'warning' : 'error'),
+            ]);
+
+        // Orders by Status for Chart
+        $ordersByStatus = [
+            ['label' => 'En attente', 'quantity' => (clone $orderQuery)->where('order_status', 'pending')->count(), 'color' => '#fb923c'],
+            ['label' => 'Validées', 'quantity' => (clone $orderQuery)->where('order_status', 'validated')->count(), 'color' => '#0c24ff'],
+            ['label' => 'Au Warehouse', 'quantity' => (clone $orderQuery)->where('order_status', 'reached_warehouse')->count(), 'color' => '#8f1cd2'],
+            ['label' => 'En transit', 'quantity' => (clone $orderQuery)->where('order_status', 'shipped_to_stockist')->count(), 'color' => '#707ce5'],
+            ['label' => 'Chez Stockist', 'quantity' => (clone $orderQuery)->where('order_status', 'reached_stockist')->count(), 'color' => '#00b230'],
+            ['label' => 'Livrées', 'quantity' => (clone $orderQuery)->where('order_status', 'delivered')->count(), 'color' => '#22c55e'],
+        ];
+
         return response()->json([
             'status' => 200,
             'stats' => $stats,
             'recentOrders' => $recentOrders,
             'recentDeliveries' => $recentDeliveries,
+            'topCustomers' => $topCustomers,
+            'topCouriers' => $topCouriers,
+            'recentRegistrations' => $recentRegistrations,
+            'ordersByStatus' => $ordersByStatus,
         ]);
     }
 
@@ -85,10 +154,19 @@ class OperationalStatsController extends Controller
             ->get()
             ->map($this->formatOrder());
 
+        // Orders by Status for Chart
+        $ordersByStatus = [
+            ['label' => 'En attente', 'quantity' => (clone $orderQuery)->where('order_status', 'pending')->count(), 'color' => '#fb923c'],
+            ['label' => 'Validées', 'quantity' => (clone $orderQuery)->where('order_status', 'validated')->count(), 'color' => '#0c24ff'],
+            ['label' => 'Chez Stockist', 'quantity' => (clone $orderQuery)->where('order_status', 'reached_stockist')->count(), 'color' => '#00b230'],
+            ['label' => 'Livrées', 'quantity' => (clone $orderQuery)->where('order_status', 'delivered')->count(), 'color' => '#22c55e'],
+        ];
+
         return response()->json([
             'status' => 200,
             'stats' => $stats,
             'recentOrders' => $recentOrders,
+            'ordersByStatus' => $ordersByStatus,
         ]);
     }
 

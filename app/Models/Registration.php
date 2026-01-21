@@ -20,6 +20,9 @@ class Registration extends Model
         'plan',
         'payment_method',
         'status',
+        'password',
+        'created_by',
+        'requested_role',
     ];
 
 }

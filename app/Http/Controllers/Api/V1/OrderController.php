@@ -25,9 +25,12 @@ class OrderController extends Controller
         $query = Order::query()->with(['items.product', 'user']);
 
         if ($user->role === 'warehouse') {
-            $query->where('shipping_country', $user->country);
+            $countryName = $user->country?->name;
+            if ($countryName) {
+                $query->where('shipping_country', $countryName);
+            }
         } elseif ($user->role === 'stockist') {
-            $query->where('stockist_id', $user->id);
+            $query->where('stockist', $user->id);
         }
 
         $orders = $query->orderByDesc('created_at')->get();
@@ -106,7 +109,7 @@ class OrderController extends Controller
                     ]);
 
                     Product::query()->where('id', $cartItem->product_id)->update([
-                        'quantity' => DB::raw('GREATEST(quantity - ' . ((int) $cartItem->quantity) . ', 0)'),
+                        'quantity' => DB::raw('CASE WHEN quantity - ' . ((int) $cartItem->quantity) . ' > 0 THEN quantity - ' . ((int) $cartItem->quantity) . ' ELSE 0 END'),
                         'sold' => DB::raw('sold + ' . ((int) $cartItem->quantity)),
                     ]);
                 }
@@ -162,97 +165,106 @@ class OrderController extends Controller
         $shippingPhone = $shipping['phone'] ?? $request->input('shipping_phone');
         $shippingEmail = $shipping['email'] ?? $request->input('shipping_email', $user->email);
 
-        $order = DB::transaction(function () use ($user, $cart, $shippingName, $shippingStreet, $shippingCity, $shippingCountry, $shippingZip, $shippingPhone, $shippingEmail, $request) {
-            $cart->loadMissing('items');
-            $total = $cart->total_price_after_discount !== null ? (float) $cart->total_price_after_discount : (float) $cart->total_price;
+        try {
+            $order = DB::transaction(function () use ($user, $cart, $shippingName, $shippingStreet, $shippingCity, $shippingCountry, $shippingZip, $shippingPhone, $shippingEmail, $request) {
+                $cart->loadMissing('items');
+                $total = $cart->total_price_after_discount !== null ? (float) $cart->total_price_after_discount : (float) $cart->total_price;
 
-            $order = Order::create([
-                'user_id' => $user->id,
-                'tracking_code' => Order::generateTrackingCode(),
-                'shipping_name' => $shippingName,
-                'shipping_street' => $shippingStreet,
-                'shipping_city' => $shippingCity,
-                'shipping_country' => $shippingCountry,
-                'shipping_zip' => $shippingZip,
-                'shipping_phone' => $shippingPhone,
-                'shipping_email' => $shippingEmail,
-                'distributor_id' => $request->input('distributorId'),
-                'stockist' => $request->input('stockist'),
-                'payment_method' => $request->input('paymentMethod', 'cash'),
-                'is_paid' => false,
-                'is_delivered' => false,
-                'order_status' => 'processing',
-                'total_order_price' => $total,
-                'order_at' => now(),
-            ]);
+                $order = Order::create([
+                    'user_id' => $user->id,
+                    'tracking_code' => Order::generateTrackingCode(),
+                    'shipping_name' => $shippingName,
+                    'shipping_street' => $shippingStreet,
+                    'shipping_city' => $shippingCity,
+                    'shipping_country' => $shippingCountry,
+                    'shipping_zip' => $shippingZip,
+                    'shipping_phone' => $shippingPhone,
+                    'shipping_email' => $shippingEmail,
+                    'distributor_id' => $request->input('distributorId'),
+                    'stockist' => $request->input('stockist'),
+                    'payment_method' => $request->input('paymentMethod', 'cash'),
+                    'is_paid' => false,
+                    'is_delivered' => false,
+                    'order_status' => 'processing',
+                    'total_order_price' => $total,
+                    'order_at' => now(),
+                ]);
 
-            // Create Notifications for various roles
-            $notificationData = [
-                'category' => 'order',
-                'type' => 'success',
-                'metadata' => ['order_id' => $order->id, 'tracking_code' => $order->tracking_code]
-            ];
+                // Create Notifications for various roles
+                $notificationData = [
+                    'category' => 'order',
+                    'type' => 'success',
+                    'metadata' => ['order_id' => $order->id, 'tracking_code' => $order->tracking_code]
+                ];
 
-            // 1. Notify the country Warehouse (if applicable)
-            $orderCountry = $order->shipping_country ?? $user->country;
-            if ($orderCountry) {
-                // Find warehouse for this country
-                $warehouse = \App\Models\User::where('role', 'warehouse')->where('country', $orderCountry)->first();
-                if ($warehouse) {
-                    \App\Models\Notification::create(array_merge($notificationData, [
-                        'title' => 'Nouvelle commande ' . ($user->role === 'stockist' ? 'Stockiste' : 'Client'),
-                        'message' => "Une nouvelle commande (#{$order->tracking_code}) est arrivée pour votre pays.",
-                        'user_id' => $warehouse->id
-                    ]));
+                // 1. Notify the country Warehouse (if applicable)
+                $orderCountry = $order->shipping_country ?? ($user->country ? $user->country->name : null);
+                if ($orderCountry) {
+                    // Find warehouse for this country
+                    $warehouse = \App\Models\User::where('role', 'warehouse')
+                        ->whereHas('country', function ($q) use ($orderCountry) {
+                            $q->where('name', $orderCountry);
+                        })->first();
+                    if ($warehouse) {
+                        \App\Models\Notification::create(array_merge($notificationData, [
+                            'title' => 'Nouvelle commande ' . ($user->role === 'stockist' ? 'Stockiste' : 'Client'),
+                            'message' => "Une nouvelle commande (#{$order->tracking_code}) est arrivée pour votre pays.",
+                            'user_id' => $warehouse->id
+                        ]));
+                    }
                 }
-            }
 
-            // 2. Notify Admin/Dev/Webmaster (Global)
-            \App\Models\Notification::create(array_merge($notificationData, [
-                'title' => 'Commande Reçue: ' . ($user->role === 'warehouse' ? 'Warehouse' : ($user->role === 'stockist' ? 'Stockist' : 'Client')),
-                'message' => "Commande #{$order->tracking_code} passée par {$user->name} ({$user->role}).",
-            ]));
+                // 2. Notify Admin/Dev/Webmaster (Global)
+                \App\Models\Notification::create(array_merge($notificationData, [
+                    'title' => 'Commande Reçue: ' . ($user->role === 'warehouse' ? 'Warehouse' : ($user->role === 'stockist' ? 'Stockist' : 'Client')),
+                    'message' => "Commande #{$order->tracking_code} passée par {$user->name} ({$user->role}).",
+                ]));
 
-            foreach ($cart->items as $cartItem) {
-                OrderItem::create([
-                    'order_id' => $order->id,
-                    'product_id' => $cartItem->product_id,
-                    'quantity' => $cartItem->quantity,
-                    'price' => $cartItem->price,
-                    'total_product_discount' => $cartItem->total_product_discount,
-                ]);
+                foreach ($cart->items as $cartItem) {
+                    OrderItem::create([
+                        'order_id' => $order->id,
+                        'product_id' => $cartItem->product_id,
+                        'quantity' => $cartItem->quantity,
+                        'price' => $cartItem->price,
+                        'total_product_discount' => $cartItem->total_product_discount,
+                    ]);
 
-                Product::query()->where('id', $cartItem->product_id)->update([
-                    'quantity' => DB::raw('GREATEST(quantity - ' . ((int) $cartItem->quantity) . ', 0)'),
-                    'sold' => DB::raw('sold + ' . ((int) $cartItem->quantity)),
-                ]);
-            }
+                    Product::query()->where('id', $cartItem->product_id)->update([
+                        'quantity' => DB::raw('CASE WHEN quantity - ' . ((int) $cartItem->quantity) . ' > 0 THEN quantity - ' . ((int) $cartItem->quantity) . ' ELSE 0 END'),
+                        'sold' => DB::raw('sold + ' . ((int) $cartItem->quantity)),
+                    ]);
+                }
 
-            $cart->items()->delete();
-            $cart->delete();
+                $cart->items()->delete();
+                $cart->delete();
 
-            return $order->fresh(['items.product', 'user']);
-        });
+                return $order->fresh(['items.product', 'user']);
+            });
 
-        // Generate Payment Link
-        $paymentService = new \App\Services\PaymentService();
-        $redirectUrl = $paymentService->initializePayment($order);
+            // Generate Payment Link
+            $paymentService = new \App\Services\PaymentService();
+            $redirectUrl = $paymentService->initializePayment($order);
 
-        ActivityLogger::log(
-            "Order Created",
-            "User {$user->name} placed order #{$order->tracking_code} from cart",
-            "success",
-            ['order_id' => $order->id, 'tracking_code' => $order->tracking_code]
-        );
+            ActivityLogger::log(
+                "Order Created",
+                "User {$user->name} placed order #{$order->tracking_code} from cart",
+                "success",
+                ['order_id' => $order->id, 'tracking_code' => $order->tracking_code]
+            );
 
-        // Broadcast event for real-time notifications
-        broadcast(new OrderCreated($order))->toOthers();
+            // Broadcast event for real-time notifications
+            broadcast(new OrderCreated($order))->toOthers();
 
-        return response()->json([
-            'message' => 'success',
-            'order' => $this->toNodeOrder($order),
-            'payment_url' => $redirectUrl,
-        ], 201);
+            return response()->json([
+                'message' => 'success',
+                'order' => $this->toNodeOrder($order),
+                'payment_url' => $redirectUrl,
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 400);
+        }
     }
 
     /**

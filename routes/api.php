@@ -175,7 +175,7 @@ Route::prefix('v1')->group(function () {
 
     Route::prefix('orders')->group(function () {
         Route::get('/', [OrderController::class, 'show'])->middleware('auth:sanctum');
-        Route::get('/all', [OrderController::class, 'index']);
+        Route::get('/all', [OrderController::class, 'index'])->middleware('auth:sanctum');
         Route::get('/track/{code}', [OrderController::class, 'track']); // Public tracking
         Route::get('/search/{code}', [OrderController::class, 'searchByCode'])->middleware('auth:sanctum');
         Route::post('/checkOut/{id}', [OrderController::class, 'checkOut'])->middleware('auth:sanctum');

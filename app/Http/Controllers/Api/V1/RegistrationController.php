@@ -15,7 +15,14 @@ class RegistrationController extends Controller
      */
     public function index()
     {
-        $registrations = Registration::orderBy('created_at', 'desc')->get();
+        $user = auth('sanctum')->user();
+        $query = Registration::query();
+
+        if ($user && $user->role === \App\Models\User::ROLE_WAREHOUSE) {
+            $query->where('requested_role', \App\Models\User::ROLE_STOCKIST);
+        }
+
+        $registrations = $query->orderBy('created_at', 'desc')->get();
         return response()->json([
             'status' => 200,
             'registrations' => $registrations,
@@ -38,6 +45,8 @@ class RegistrationController extends Controller
             'country' => 'required|string|max:255',
             'plan' => 'required|string|max:50',
             'payment_method' => 'required|string|max:50',
+            'password' => 'required|string|min:8',
+            'requested_role' => 'sometimes|string|in:stockist,warehouse',
         ]);
 
         if ($validator->fails()) {
@@ -47,7 +56,29 @@ class RegistrationController extends Controller
             ], 400);
         }
 
-        $registration = Registration::create($request->all());
+        $data = $request->all();
+        if (auth('sanctum')->check()) {
+            $data['created_by'] = auth('sanctum')->id();
+        }
+
+        $registration = Registration::create($data);
+
+        // Notify Admins and Devs
+        $admins = \App\Models\User::whereIn('role', [\App\Models\User::ROLE_SUPER_ADMIN, \App\Models\User::ROLE_DEV])->get();
+        foreach ($admins as $admin) {
+            \App\Models\Notification::create([
+                'title' => 'Nouvelle inscription',
+                'message' => 'Une nouvelle inscription (' . $registration->requested_role . ') de ' . $registration->first_name . ' ' . $registration->last_name . ' a été reçue.',
+                'category' => 'system',
+                'type' => 'info',
+                'user_id' => $admin->id,
+                'is_read' => false,
+                'metadata' => [
+                    'registration_id' => $registration->id,
+                    'type' => 'new_registration'
+                ]
+            ]);
+        }
 
         return response()->json([
             'status' => 201,
@@ -99,11 +130,53 @@ class RegistrationController extends Controller
             ], 400);
         }
 
+        $user = auth('sanctum')->user();
+
+        if ($request->status === 'approved' && $registration->status !== 'approved') {
+            // Permission Check: Warehouse-created registrations require Admin/Dev approval
+            if ($registration->created_by) {
+                $creator = \App\Models\User::find($registration->created_by);
+                if ($creator && $creator->role === \App\Models\User::ROLE_WAREHOUSE) {
+                    if (!$user->isAdmin()) {
+                        return response()->json([
+                            'status' => 403,
+                            'message' => 'Les inscriptions créées par le Warehouse doivent être validées par un Admin.'
+                        ], 403);
+                    }
+                }
+            }
+
+            // Permission Check: Warehouse registrations require Admin/Dev approval
+            if ($registration->requested_role === \App\Models\User::ROLE_WAREHOUSE) {
+                if (!$user->isAdmin()) {
+                    return response()->json([
+                        'status' => 403,
+                        'message' => 'Les inscriptions pour le rôle Warehouse doivent être validées par un Admin.'
+                    ], 403);
+                }
+            }
+
+            $country = \App\Models\Country::where('name', $registration->country)->first();
+
+            // Create User
+            \App\Models\User::create([
+                'name' => $registration->first_name . ' ' . $registration->last_name,
+                'username' => $registration->username,
+                'email' => $registration->email,
+                'password' => $registration->password, // Password hashing handled by User model casts
+                'role' => $registration->requested_role ?: \App\Models\User::ROLE_STOCKIST,
+                'phone' => $registration->phone,
+                'country_id' => $country ? $country->id : null,
+                'city' => $registration->city,
+                'address' => $registration->address,
+            ]);
+        }
+
         $registration->update($request->all());
 
         return response()->json([
             'status' => 200,
-            'message' => 'Registration updated successfully',
+            'message' => 'Inscription mise à jour avec succès.',
             'registration' => $registration,
         ]);
     }

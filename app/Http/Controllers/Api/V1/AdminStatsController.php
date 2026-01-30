@@ -14,7 +14,7 @@ class AdminStatsController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
-        $allowedRoles = ['admin', 'super_admin', 'webmaster', 'dev'];
+        $allowedRoles = ['admin', 'webmaster', 'dev'];
         $hasAccess = in_array($user?->role ?? 'user', $allowedRoles);
         if (!$hasAccess) {
             return response()->json([
@@ -89,7 +89,7 @@ class AdminStatsController extends Controller
 
         // Team Members (admins/staff)
         $teamMembers = User::query()
-            ->whereIn('role', ['admin', 'super_admin', 'webmaster', 'dev', 'warehouse'])
+            ->whereIn('role', ['admin', 'webmaster', 'dev', 'warehouse'])
             ->limit(5)
             ->get()
             ->map(function ($user) {
@@ -146,7 +146,7 @@ class AdminStatsController extends Controller
     public function salesByCountry(Request $request)
     {
         $user = $request->user();
-        $allowedRoles = ['admin', 'super_admin', 'webmaster', 'dev'];
+        $allowedRoles = ['admin', 'webmaster', 'dev'];
         if (!in_array($user?->role ?? 'user', $allowedRoles)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }

@@ -18,7 +18,7 @@ class User extends Authenticatable
 
     /** Rôles Utilisateurs */
     const ROLE_DEV = 'dev';
-    const ROLE_SUPER_ADMIN = 'super_admin';
+    const ROLE_ADMIN = 'admin';
     const ROLE_WEBMASTER = 'webmaster';
     const ROLE_STOCKIST = 'stockist';
     const ROLE_WAREHOUSE = 'warehouse';
@@ -121,10 +121,10 @@ class User extends Authenticatable
     }
 
     /**
-     * Check if user is an administrator (Super Admin or Dev)
+     * Check if user is an administrator (Admin or Dev)
      */
     public function isAdmin(): bool
     {
-        return in_array($this->role, [self::ROLE_DEV, self::ROLE_SUPER_ADMIN]);
+        return in_array($this->role, [self::ROLE_DEV, self::ROLE_ADMIN]);
     }
 }

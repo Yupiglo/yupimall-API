@@ -64,7 +64,7 @@ class RegistrationController extends Controller
         $registration = Registration::create($data);
 
         // Notify Admins and Devs
-        $admins = \App\Models\User::whereIn('role', [\App\Models\User::ROLE_SUPER_ADMIN, \App\Models\User::ROLE_DEV])->get();
+        $admins = \App\Models\User::whereIn('role', [\App\Models\User::ROLE_ADMIN, \App\Models\User::ROLE_DEV])->get();
         foreach ($admins as $admin) {
             \App\Models\Notification::create([
                 'title' => 'Nouvelle inscription',

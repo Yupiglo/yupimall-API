@@ -23,7 +23,7 @@ class ReviewController extends Controller
         $paginator = Review::query()->with('user')->paginate($limit, ['*'], 'page', $page);
 
         $reviews = collect($paginator->items())
-            ->map(fn (Review $r) => $this->toNodeReview($r))
+            ->map(fn(Review $r) => $this->toNodeReview($r))
             ->values();
 
         return response()->json([
@@ -98,8 +98,7 @@ class ReviewController extends Controller
     public function update(Request $request, string $id)
     {
         $user = $request->user();
-
-        $isAdmin = ($user->role ?? 'user') === 'admin';
+        $isAdmin = $user->isAdmin();
         $reviewQuery = Review::query()->where('id', $id);
         if (!$isAdmin) {
             $reviewQuery->where('user_id', $user->id);
@@ -127,7 +126,7 @@ class ReviewController extends Controller
     public function destroy(string $id)
     {
         $user = request()->user();
-        $isAdmin = ($user->role ?? 'user') === 'admin';
+        $isAdmin = $user->isAdmin();
         $reviewQuery = Review::query()->where('id', $id);
         if (!$isAdmin) {
             $reviewQuery->where('user_id', $user->id);

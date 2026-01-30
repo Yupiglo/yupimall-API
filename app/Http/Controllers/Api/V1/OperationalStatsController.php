@@ -65,7 +65,7 @@ class OperationalStatsController extends Controller
             ->map($this->formatDelivery());
 
         // Top 5 Customers (users with most orders) - exclude admin and warehouse roles
-        $excludedRoles = ['dev', 'super_admin', 'webmaster', 'warehouse'];
+        $excludedRoles = ['dev', 'webmaster', 'warehouse'];
         $topCustomers = User::select('users.*', DB::raw('COUNT(orders.id) as order_count'), DB::raw('SUM(orders.total_order_price) as total_spent'))
             ->leftJoin('orders', 'users.id', '=', 'orders.user_id')
             ->where('orders.shipping_country', $countryName)

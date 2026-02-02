@@ -46,6 +46,8 @@ class AuthController extends Controller
                 'role' => $user->role ?? 'consumer',
                 'country' => $user->country,
                 'supervisor_id' => $user->supervisor_id,
+                'image_url' => $user->image_url,
+                'avatar_url' => $user->avatar_url,
             ],
         ], 200);
     }

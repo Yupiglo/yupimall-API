@@ -826,9 +826,17 @@ class OrderController extends Controller
 
     private function toNodeOrder(Order $order): array
     {
-        $order->loadMissing(['items.product']);
+        $order->loadMissing(['items.product', 'user']);
 
         return [
+            // Panel-friendly fields
+            'id' => $order->id,
+            'trackingCode' => $order->tracking_code,
+            'status' => $order->order_status,
+            'customer' => $order->shipping_name ?? $order->user?->name ?? 'Guest',
+            'total' => (float) $order->total_order_price,
+            'userName' => $order->shipping_name ?? $order->user?->name ?? 'Guest',
+            // Legacy fields
             '_id' => (string) $order->id,
             'userId' => (string) $order->user_id,
             'cartItem' => $order->items->map(function (OrderItem $item) {

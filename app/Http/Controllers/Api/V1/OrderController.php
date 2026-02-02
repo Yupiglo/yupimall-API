@@ -810,11 +810,16 @@ class OrderController extends Controller
                     'email' => $order->shipping_email,
                 ],
                 'items' => $order->items->map(function ($item) {
+                    $cover = $item->product?->img_cover;
+                    $coverPath = is_string($cover) && $cover !== ''
+                        ? (str_starts_with($cover, 'uploads/') || str_starts_with($cover, '/uploads/') ? $cover : ('uploads/products/' . ltrim($cover, '/')))
+                        : null;
+
                     return [
                         'name' => $item->product?->title ?? 'Produit',
                         'quantity' => (int) $item->quantity,
                         'price' => (float) $item->price,
-                        'image' => $item->product?->img_cover,
+                        'image' => $coverPath,
                     ];
                 })->values(),
                 'orderedAt' => optional($order->order_at)->toISOString(),

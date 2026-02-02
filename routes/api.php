@@ -39,7 +39,9 @@ Route::prefix('v1')->group(function () {
 
     Route::prefix('auth')->group(function () {
         Route::post('/signin', [AuthController::class, 'signin']);
+        Route::post('/signup', [RegistrationController::class, 'store']); // Alias for member registration
         Route::post('/loginWithYupi', [AuthController::class, 'loginWithYupi']);
+        Route::post('/register-from-order', [AuthController::class, 'registerFromOrder']); // Guest conversion
         Route::post('/validateSession', [AuthController::class, 'validateSession'])->middleware('auth:sanctum');
         Route::post('/refresh-token', function () {
             return response()->json(['message' => 'Not implemented in Sanctum, tokens are long-lived or handled via re-auth'], 200);
@@ -49,6 +51,12 @@ Route::prefix('v1')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/me', [UserController::class, 'me']);
         Route::put('/me', [UserController::class, 'updateProfile']);
+
+        // Alias routes for frontend compatibility
+        Route::prefix('users')->group(function () {
+            Route::get('/profile', [UserController::class, 'me']);
+            Route::put('/profile', [UserController::class, 'updateProfile']);
+        });
 
         // Logs
         Route::get('/admin/logs', [\App\Http\Controllers\Api\V1\LogController::class, 'auditLogs']);
@@ -177,6 +185,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/', [OrderController::class, 'show'])->middleware('auth:sanctum');
         Route::get('/all', [OrderController::class, 'index'])->middleware('auth:sanctum');
         Route::get('/track/{code}', [OrderController::class, 'track']); // Public tracking
+        Route::post('/guest', [OrderController::class, 'storeGuest']); // Guest order (no auth)
         Route::get('/search/{code}', [OrderController::class, 'searchByCode'])->middleware('auth:sanctum');
         Route::post('/checkOut/{id}', [OrderController::class, 'checkOut'])->middleware('auth:sanctum');
         Route::post('/user-cart', [OrderController::class, 'storeFromUserCart'])->middleware('auth:sanctum');

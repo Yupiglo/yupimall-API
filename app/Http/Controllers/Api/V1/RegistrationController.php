@@ -31,6 +31,7 @@ class RegistrationController extends Controller
 
     /**
      * Store a newly created resource in storage.
+     * Used for member registration via /be-member (with paid pack)
      */
     public function store(Request $request)
     {
@@ -46,7 +47,10 @@ class RegistrationController extends Controller
             'plan' => 'required|string|max:50',
             'payment_method' => 'required|string|max:50',
             'password' => 'required|string|min:8',
-            'requested_role' => 'sometimes|string|in:stockist,warehouse',
+            'sponsor_id' => 'nullable|string|max:50',
+            'zip_code' => 'nullable|string|max:20',
+            // requested_role is optional - defaults to 'member' for /be-member signups
+            'requested_role' => 'sometimes|string|in:member,stockist,warehouse',
         ]);
 
         if ($validator->fails()) {
@@ -57,6 +61,16 @@ class RegistrationController extends Controller
         }
 
         $data = $request->all();
+
+        // Set default role to 'member' if not specified (for /be-member signups)
+        if (!isset($data['requested_role']) || empty($data['requested_role'])) {
+            $data['requested_role'] = 'member';
+        }
+
+        // Bypass payment for now - mark as paid
+        // TODO: Integrate actual payment gateway later
+        $data['payment_status'] = 'paid'; // Simulated - will be replaced with actual payment check
+
         if (auth('sanctum')->check()) {
             $data['created_by'] = auth('sanctum')->id();
         }
@@ -64,26 +78,32 @@ class RegistrationController extends Controller
         $registration = Registration::create($data);
 
         // Notify Admins and Devs
+        $roleLabel = $data['requested_role'] === 'member' ? 'Membre' : ucfirst($data['requested_role']);
+        $planLabel = strtoupper($registration->plan);
+
         $admins = \App\Models\User::whereIn('role', [\App\Models\User::ROLE_ADMIN, \App\Models\User::ROLE_DEV])->get();
         foreach ($admins as $admin) {
             \App\Models\Notification::create([
-                'title' => 'Nouvelle inscription',
-                'message' => 'Une nouvelle inscription (' . $registration->requested_role . ') de ' . $registration->first_name . ' ' . $registration->last_name . ' a été reçue.',
+                'title' => 'Nouvelle demande membre',
+                'message' => "Demande d'inscription {$roleLabel} (Pack {$planLabel}) de {$registration->first_name} {$registration->last_name}. Paiement: {$data['payment_status']}.",
                 'category' => 'system',
                 'type' => 'info',
                 'user_id' => $admin->id,
                 'is_read' => false,
                 'metadata' => [
                     'registration_id' => $registration->id,
-                    'type' => 'new_registration'
+                    'type' => 'new_member_registration',
+                    'plan' => $registration->plan,
+                    'payment_status' => $data['payment_status'],
                 ]
             ]);
         }
 
         return response()->json([
             'status' => 201,
-            'message' => 'Inscription enregistrée avec succès. Elle sera examinée par notre équipe.',
+            'message' => 'Inscription enregistrée avec succès. Votre demande sera examinée par notre équipe.',
             'registration' => $registration,
+            'payment_status' => $data['payment_status'],
         ], 201);
     }
 
@@ -158,18 +178,31 @@ class RegistrationController extends Controller
 
             $country = \App\Models\Country::where('name', $registration->country)->first();
 
-            // Create User
-            \App\Models\User::create([
+            // Determine the role - use 'member' as default for /be-member signups
+            $role = $registration->requested_role ?: \App\Models\User::ROLE_MEMBER;
+
+            // Create User in local database
+            $newUser = \App\Models\User::create([
                 'name' => $registration->first_name . ' ' . $registration->last_name,
                 'username' => $registration->username,
                 'email' => $registration->email,
                 'password' => $registration->password, // Password hashing handled by User model casts
-                'role' => $registration->requested_role ?: \App\Models\User::ROLE_STOCKIST,
+                'role' => $role,
                 'phone' => $registration->phone,
                 'country_id' => $country ? $country->id : null,
                 'city' => $registration->city,
                 'address' => $registration->address,
             ]);
+
+            // For members: Send email with credentials for external interface
+            if ($role === 'member' || $role === \App\Models\User::ROLE_MEMBER) {
+                // TODO: Send actual email with credentials
+                // For now, log the action
+                \Log::info("Member approved: {$registration->email}. Should send email with credentials for external member dashboard.");
+
+                // Create notification for the approval
+                // Note: The member's actual dashboard is external, we just store them locally for benefits
+            }
         }
 
         $registration->update($request->all());

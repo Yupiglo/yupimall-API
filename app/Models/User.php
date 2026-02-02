@@ -25,6 +25,7 @@ class User extends Authenticatable
     const ROLE_DELIVERY = 'delivery';
     const ROLE_DISTRIBUTOR = 'distributor';
     const ROLE_CONSUMER = 'consumer';
+    const ROLE_MEMBER = 'member'; // Membres inscrits via /be-member avec pack payant
 
     /**
      * The attributes that are mass assignable.

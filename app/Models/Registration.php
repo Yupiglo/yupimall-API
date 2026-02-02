@@ -19,6 +19,7 @@ class Registration extends Model
         'zip_code',
         'plan',
         'payment_method',
+        'payment_status', // 'pending', 'paid', 'failed'
         'status',
         'password',
         'created_by',

@@ -13,6 +13,7 @@ use App\Events\OrderCreated;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class OrderController extends Controller
 {
@@ -268,6 +269,161 @@ class OrderController extends Controller
     }
 
     /**
+     * Store a guest order (no authentication required)
+     * Accepts cart items directly from localStorage
+     */
+    public function storeGuest(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.product_id' => ['required', 'exists:products,id'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'shippingAddress' => ['required', 'array'],
+            'shippingAddress.name' => ['required', 'string', 'max:255'],
+            'shippingAddress.email' => ['required', 'email'],
+            'shippingAddress.phone' => ['nullable', 'string'],
+            'shippingAddress.street' => ['nullable', 'string'],
+            'shippingAddress.city' => ['nullable', 'string'],
+            'shippingAddress.country' => ['required', 'string'],
+            'stockist' => ['nullable', 'string'],
+            'paymentMethod' => ['nullable', 'string'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 400);
+        }
+
+        $items = $request->input('items');
+        $shipping = $request->input('shippingAddress');
+
+        try {
+            $order = DB::transaction(function () use ($items, $shipping, $request) {
+                // Validate stock availability
+                $total = 0;
+                $orderItems = [];
+
+                foreach ($items as $item) {
+                    $product = Product::find($item['product_id']);
+                    if (!$product) {
+                        throw new \Exception("Produit introuvable (ID: {$item['product_id']})");
+                    }
+                    if ($product->quantity < $item['quantity']) {
+                        throw new \Exception("Stock insuffisant pour '{$product->title}'");
+                    }
+
+                    $itemTotal = $product->price * $item['quantity'];
+                    $total += $itemTotal;
+
+                    $orderItems[] = [
+                        'product_id' => $product->id,
+                        'quantity' => $item['quantity'],
+                        'price' => $product->price,
+                        'total_product_discount' => 0,
+                    ];
+                }
+
+                // Create the order without user_id (guest order)
+                $order = Order::create([
+                    'user_id' => null, // Guest order
+                    'tracking_code' => Order::generateTrackingCode(),
+                    'shipping_name' => $shipping['name'],
+                    'shipping_street' => $shipping['street'] ?? null,
+                    'shipping_city' => $shipping['city'] ?? null,
+                    'shipping_country' => $shipping['country'],
+                    'shipping_zip' => $shipping['zip'] ?? null,
+                    'shipping_phone' => $shipping['phone'] ?? null,
+                    'shipping_email' => $shipping['email'],
+                    'distributor_id' => $request->input('distributorId'),
+                    'stockist' => $request->input('stockist'),
+                    'payment_method' => $request->input('paymentMethod', 'cash'),
+                    'is_paid' => false,
+                    'is_delivered' => false,
+                    'order_status' => 'pending',
+                    'total_order_price' => $total,
+                    'order_at' => now(),
+                ]);
+
+                // Create order items and update stock
+                foreach ($orderItems as $orderItem) {
+                    OrderItem::create([
+                        'order_id' => $order->id,
+                        'product_id' => $orderItem['product_id'],
+                        'quantity' => $orderItem['quantity'],
+                        'price' => $orderItem['price'],
+                        'total_product_discount' => $orderItem['total_product_discount'],
+                    ]);
+
+                    Product::where('id', $orderItem['product_id'])->update([
+                        'quantity' => DB::raw('CASE WHEN quantity - ' . $orderItem['quantity'] . ' > 0 THEN quantity - ' . $orderItem['quantity'] . ' ELSE 0 END'),
+                        'sold' => DB::raw('sold + ' . $orderItem['quantity']),
+                    ]);
+                }
+
+                return $order->fresh(['items.product']);
+            });
+
+            // Notify warehouse
+            $orderCountry = $order->shipping_country;
+            if ($orderCountry) {
+                $warehouse = User::where('role', 'warehouse')
+                    ->whereHas('country', fn($q) => $q->where('name', $orderCountry))
+                    ->first();
+
+                if ($warehouse) {
+                    Notification::create([
+                        'title' => 'Nouvelle commande Invité',
+                        'message' => "Une nouvelle commande invité (#{$order->tracking_code}) est arrivée.",
+                        'category' => 'order',
+                        'type' => 'success',
+                        'user_id' => $warehouse->id,
+                        'metadata' => ['order_id' => $order->id, 'tracking_code' => $order->tracking_code],
+                    ]);
+                }
+            }
+
+            // Global notification
+            Notification::create([
+                'title' => 'Commande Invité Reçue',
+                'message' => "Commande invité #{$order->tracking_code} passée par {$shipping['name']}.",
+                'category' => 'order',
+                'type' => 'success',
+                'metadata' => ['order_id' => $order->id, 'tracking_code' => $order->tracking_code],
+            ]);
+
+            ActivityLogger::log(
+                "Guest Order Created",
+                "Guest {$shipping['name']} placed order #{$order->tracking_code} (Total: {$order->total_order_price})",
+                "success",
+                ['order_id' => $order->id, 'tracking_code' => $order->tracking_code, 'guest_email' => $shipping['email']]
+            );
+
+            // Generate Payment Link
+            $redirectUrl = null;
+            try {
+                $paymentService = new \App\Services\PaymentService();
+                $redirectUrl = $paymentService->initializePayment($order);
+            } catch (\Exception $e) {
+                // Payment init failed, but order is still created
+            }
+
+            return response()->json([
+                'message' => 'Commande créée avec succès',
+                'tracking_code' => $order->tracking_code,
+                'order' => $this->toNodeOrder($order),
+                'payment_url' => $redirectUrl,
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 400);
+        }
+    }
+
+    /**
      * Display the specified resource.
      */
     public function show(Request $request)
@@ -508,10 +664,12 @@ class OrderController extends Controller
                 'isPaid' => (bool) $order->is_paid,
                 'isDelivered' => (bool) $order->is_delivered,
                 'totalPrice' => (float) $order->total_order_price,
+                'hasUser' => $order->user_id !== null, // For guest conversion check
                 'shippingAddress' => [
                     'name' => $order->shipping_name,
                     'city' => $order->shipping_city,
                     'country' => $order->shipping_country,
+                    'email' => $order->shipping_email,
                 ],
                 'items' => $order->items->map(function ($item) {
                     return [

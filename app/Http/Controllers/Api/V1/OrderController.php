@@ -468,8 +468,11 @@ class OrderController extends Controller
         // Format order for frontend
         $formattedOrder = [
             'id' => $order->id,
+            '_id' => (string) $order->id,
             'trackingCode' => $order->tracking_code,
+            'tracking_code' => $order->tracking_code,
             'status' => $order->order_status,
+            'orderStatus' => $order->order_status, // For webmaster compatibility
             'customer' => $order->shipping_name ?? $order->user?->name ?? 'Guest',
             'customerPhone' => $order->shipping_phone ?? $order->user?->phone,
             'customerEmail' => $order->shipping_email ?? $order->user?->email,
@@ -478,7 +481,19 @@ class OrderController extends Controller
             'isPaid' => (bool) $order->is_paid,
             'isDelivered' => (bool) $order->is_delivered,
             'paymentMethod' => $order->payment_method,
+            'payment_method' => $order->payment_method, // For webmaster compatibility
             'stockist' => $order->stockist,
+            'distributor_id' => $order->distributor_id,
+            'paymentProof' => $order->payment_proof,
+            // Flat shipping fields for webmaster compatibility
+            'shipping_name' => $order->shipping_name,
+            'shipping_email' => $order->shipping_email,
+            'shipping_phone' => $order->shipping_phone,
+            'shipping_street' => $order->shipping_street,
+            'shipping_city' => $order->shipping_city,
+            'shipping_country' => $order->shipping_country,
+            'shipping_zip' => $order->shipping_zip,
+            // Nested for warehouse
             'shippingAddress' => [
                 'name' => $order->shipping_name,
                 'street' => $order->shipping_street,
@@ -488,6 +503,12 @@ class OrderController extends Controller
                 'phone' => $order->shipping_phone,
                 'email' => $order->shipping_email,
             ],
+            // User reference
+            'user' => $order->user ? [
+                'id' => $order->user->id,
+                'name' => $order->user->name,
+                'email' => $order->user->email,
+            ] : null,
             'items' => $order->items->map(function ($item) {
                 return [
                     'id' => $item->id,
@@ -497,6 +518,13 @@ class OrderController extends Controller
                     'quantity' => (int) $item->quantity,
                     'price' => (float) $item->price,
                     'discount' => (float) ($item->total_product_discount ?? 0),
+                    // For webmaster compatibility
+                    'product' => $item->product ? [
+                        'id' => $item->product->id,
+                        'title' => $item->product->title,
+                        'price' => (float) $item->product->price,
+                        'img_cover' => $item->product->img_cover,
+                    ] : null,
                 ];
             })->values(),
         ];

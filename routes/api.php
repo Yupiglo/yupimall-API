@@ -52,6 +52,7 @@ Route::prefix('v1')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/me', [UserController::class, 'me']);
         Route::put('/me', [UserController::class, 'updateProfile']);
+        Route::post('/me/avatar', [UserController::class, 'uploadAvatar']);
 
         // Alias routes for frontend compatibility
         Route::prefix('users')->group(function () {

@@ -8,6 +8,8 @@ use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\File;
 
 class UserController extends Controller
 {
@@ -335,5 +337,64 @@ class UserController extends Controller
             'message' => 'Profile updated successfully',
             'user' => $user->fresh(),
         ], 200);
+    }
+
+    /**
+     * Upload an avatar for the authenticated user.
+     */
+    public function uploadAvatar(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated'], 401);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'image' => ['required', 'image', 'mimes:jpeg,png,jpg,gif', 'max:2048'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first()], 400);
+        }
+
+        if ($request->hasFile('image')) {
+            $file = $request->file('image');
+            $folder = 'avatars';
+            $dir = public_path('uploads/' . $folder);
+
+            if (!File::exists($dir)) {
+                File::makeDirectory($dir, 0755, true);
+            }
+
+            $name = Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
+            $file->move($dir, $name);
+
+            $imageUrl = 'uploads/' . $folder . '/' . $name;
+
+            // Delete old avatar if exists
+            if ($user->image_url && File::exists(public_path($user->image_url))) {
+                // Keep default or system images if any, but usually we can delete
+                if (Str::contains($user->image_url, 'uploads/avatars')) {
+                    File::delete(public_path($user->image_url));
+                }
+            }
+
+            $user->image_url = $imageUrl;
+            $user->save();
+
+            ActivityLogger::log(
+                "Avatar Updated",
+                "User {$user->name} updated their profile picture",
+                "info"
+            );
+
+            return response()->json([
+                'message' => 'Avatar uploaded successfully',
+                'image_url' => $imageUrl,
+                'user' => $user->fresh()
+            ], 200);
+        }
+
+        return response()->json(['message' => 'No image file provided'], 400);
     }
 }

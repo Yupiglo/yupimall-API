@@ -202,12 +202,12 @@ class OrderController extends Controller
                 $orderCountry = $order->shipping_country ?? ($user->country ? $user->country->name : null);
                 if ($orderCountry) {
                     // Find warehouse for this country
-                    $warehouse = \App\Models\User::where('role', 'warehouse')
+                    $warehouse = User::where('role', 'warehouse')
                         ->whereHas('country', function ($q) use ($orderCountry) {
                             $q->where('name', $orderCountry);
                         })->first();
                     if ($warehouse) {
-                        \App\Models\Notification::create(array_merge($notificationData, [
+                        Notification::create(array_merge($notificationData, [
                             'title' => 'Nouvelle commande ' . ($user->role === 'stockist' ? 'Stockiste' : 'Client'),
                             'message' => "Une nouvelle commande (#{$order->tracking_code}) est arrivée pour votre pays.",
                             'user_id' => $warehouse->id
@@ -216,7 +216,7 @@ class OrderController extends Controller
                 }
 
                 // 2. Notify Admin/Dev/Webmaster (Global)
-                \App\Models\Notification::create(array_merge($notificationData, [
+                Notification::create(array_merge($notificationData, [
                     'title' => 'Commande Reçue: ' . ($user->role === 'warehouse' ? 'Warehouse' : ($user->role === 'stockist' ? 'Stockist' : 'Client')),
                     'message' => "Commande #{$order->tracking_code} passée par {$user->name} ({$user->role}).",
                 ]));
@@ -437,7 +437,7 @@ class OrderController extends Controller
 
         return response()->json([
             'message' => 'success',
-            'orders' => $orders->map(fn($o) => $this->toNodeOrder($o))->values(),
+            'orders' => $orders->map(fn(Order $o) => $this->toNodeOrder($o))->values(),
         ], 200);
     }
 

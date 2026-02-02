@@ -43,6 +43,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/loginWithYupi', [AuthController::class, 'loginWithYupi']);
         Route::post('/register-from-order', [AuthController::class, 'registerFromOrder']); // Guest conversion
         Route::post('/validateSession', [AuthController::class, 'validateSession'])->middleware('auth:sanctum');
+        Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
         Route::post('/refresh-token', function () {
             return response()->json(['message' => 'Not implemented in Sanctum, tokens are long-lived or handled via re-auth'], 200);
         });

@@ -442,6 +442,72 @@ class OrderController extends Controller
     }
 
     /**
+     * Display a single order by ID (for admin panels)
+     */
+    public function showOne(Request $request, string $id)
+    {
+        $user = $request->user();
+        $query = Order::query()->with(['items.product', 'user']);
+
+        // Data segregation based on role
+        if ($user->role === 'warehouse') {
+            $countryName = $user->country?->name;
+            if ($countryName) {
+                $query->where('shipping_country', $countryName);
+            }
+        } elseif ($user->role === 'stockist') {
+            $query->where('stockist', $user->id);
+        }
+
+        $order = $query->find($id);
+
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        // Format order for frontend
+        $formattedOrder = [
+            'id' => $order->id,
+            'trackingCode' => $order->tracking_code,
+            'status' => $order->order_status,
+            'customer' => $order->shipping_name ?? $order->user?->name ?? 'Guest',
+            'customerPhone' => $order->shipping_phone ?? $order->user?->phone,
+            'customerEmail' => $order->shipping_email ?? $order->user?->email,
+            'total' => (float) $order->total_order_price,
+            'createdAt' => $order->created_at?->toISOString(),
+            'isPaid' => (bool) $order->is_paid,
+            'isDelivered' => (bool) $order->is_delivered,
+            'paymentMethod' => $order->payment_method,
+            'stockist' => $order->stockist,
+            'shippingAddress' => [
+                'name' => $order->shipping_name,
+                'street' => $order->shipping_street,
+                'city' => $order->shipping_city,
+                'country' => $order->shipping_country,
+                'zip' => $order->shipping_zip,
+                'phone' => $order->shipping_phone,
+                'email' => $order->shipping_email,
+            ],
+            'items' => $order->items->map(function ($item) {
+                return [
+                    'id' => $item->id,
+                    'productId' => $item->product_id,
+                    'productName' => $item->product?->title ?? 'Unknown Product',
+                    'productImage' => $item->product?->img_cover,
+                    'quantity' => (int) $item->quantity,
+                    'price' => (float) $item->price,
+                    'discount' => (float) ($item->total_product_discount ?? 0),
+                ];
+            })->values(),
+        ];
+
+        return response()->json([
+            'message' => 'success',
+            'order' => $formattedOrder,
+        ], 200);
+    }
+
+    /**
      * Update the specified resource in storage.
      */
     /**

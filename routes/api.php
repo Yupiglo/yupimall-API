@@ -189,6 +189,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/track/{code}', [OrderController::class, 'track']); // Public tracking
         Route::post('/guest', [OrderController::class, 'storeGuest']); // Guest order (no auth)
         Route::get('/search/{code}', [OrderController::class, 'searchByCode'])->middleware('auth:sanctum');
+        Route::get('/{id}', [OrderController::class, 'showOne'])->middleware('auth:sanctum');
         Route::post('/checkOut/{id}', [OrderController::class, 'checkOut'])->middleware('auth:sanctum');
         Route::post('/user-cart', [OrderController::class, 'storeFromUserCart'])->middleware('auth:sanctum');
         Route::post('/{id}', [OrderController::class, 'store'])->middleware('auth:sanctum');

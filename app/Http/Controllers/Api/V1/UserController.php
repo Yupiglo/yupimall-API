@@ -78,7 +78,7 @@ class UserController extends Controller
     {
         $validRoles = [
             User::ROLE_DEV,
-            User::ROLE_SUPER_ADMIN,
+            User::ROLE_ADMIN,
             User::ROLE_WEBMASTER,
             User::ROLE_STOCKIST,
             User::ROLE_WAREHOUSE,
@@ -175,7 +175,7 @@ class UserController extends Controller
 
         $validRoles = [
             User::ROLE_DEV,
-            User::ROLE_SUPER_ADMIN,
+            User::ROLE_ADMIN,
             User::ROLE_WEBMASTER,
             User::ROLE_STOCKIST,
             User::ROLE_WAREHOUSE,

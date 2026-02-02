@@ -543,6 +543,50 @@ class OrderController extends Controller
     }
 
     /**
+     * Update order status only (for admin panels validation workflow)
+     */
+    public function updateOrderStatus(Request $request, string $id)
+    {
+        $order = Order::find($id);
+
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        $request->validate([
+            'status' => 'required|string',
+        ]);
+
+        $oldStatus = $order->order_status;
+        $newStatus = $request->input('status');
+
+        $order->order_status = $newStatus;
+
+        // Auto-update flags based on status
+        if (in_array($newStatus, ['delivered', 'completed'])) {
+            $order->is_delivered = true;
+            $order->delivered_at = now();
+        }
+
+        $order->save();
+
+        // Handle Status Change Notifications
+        if ($oldStatus !== $newStatus) {
+            $this->handleStatusNotification($order);
+            broadcast(new \App\Events\OrderStatusUpdated($order))->toOthers();
+        }
+
+        return response()->json([
+            'message' => 'success',
+            'order' => [
+                'id' => $order->id,
+                'status' => $order->order_status,
+                'trackingCode' => $order->tracking_code,
+            ],
+        ]);
+    }
+
+    /**
      * Remove the specified resource from storage.
      */
     public function destroy(string $id)

@@ -195,6 +195,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/{id}', [OrderController::class, 'store'])->middleware('auth:sanctum');
         Route::put('/{id}', [OrderController::class, 'update'])->middleware('auth:sanctum');
         Route::delete('/{id}', [OrderController::class, 'destroy'])->middleware('auth:sanctum');
+        Route::put('/{id}/status', [OrderController::class, 'updateOrderStatus'])->middleware('auth:sanctum');
         Route::post('/{id}/upload-proof', [OrderController::class, 'uploadProof'])->middleware('auth:sanctum');
     });
 

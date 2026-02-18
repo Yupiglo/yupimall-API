@@ -286,6 +286,84 @@ class WalletController extends Controller
     }
 
     /**
+     * POST /wallet/sellers/update — Admin/Dev: toggle wallet seller status
+     */
+    public function updateSeller(Request $request): JsonResponse
+    {
+        $authUser = $request->user();
+        if (!in_array($authUser->role, [User::ROLE_ADMIN, User::ROLE_DEV])) {
+            return response()->json(['message' => 'Non autorisé.'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'user_id' => 'required|exists:users,id',
+            'is_wallet_seller' => 'required|boolean',
+            'wallet_seller_whatsapp' => 'nullable|string|max:30',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Validation error', 'errors' => $validator->errors()], 422);
+        }
+
+        $user = User::findOrFail($request->input('user_id'));
+
+        if (!in_array($user->role, [User::ROLE_STOCKIST, User::ROLE_MEMBER, User::ROLE_DISTRIBUTOR])) {
+            return response()->json(['message' => 'Seuls les stockists, membres et distributeurs peuvent être vendeurs.'], 422);
+        }
+
+        $user->is_wallet_seller = $request->input('is_wallet_seller');
+        if ($request->has('wallet_seller_whatsapp')) {
+            $user->wallet_seller_whatsapp = $request->input('wallet_seller_whatsapp');
+        }
+        $user->save();
+
+        return response()->json([
+            'message' => $user->is_wallet_seller ? 'Vendeur activé.' : 'Vendeur désactivé.',
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+                'is_wallet_seller' => $user->is_wallet_seller,
+                'wallet_seller_whatsapp' => $user->wallet_seller_whatsapp,
+            ],
+        ]);
+    }
+
+    /**
+     * GET /wallet/sellers/eligible — Admin/Dev: list users eligible to be sellers
+     */
+    public function eligibleSellers(Request $request): JsonResponse
+    {
+        $authUser = $request->user();
+        if (!in_array($authUser->role, [User::ROLE_ADMIN, User::ROLE_DEV])) {
+            return response()->json(['message' => 'Non autorisé.'], 403);
+        }
+
+        $query = User::whereIn('role', [User::ROLE_STOCKIST, User::ROLE_MEMBER, User::ROLE_DISTRIBUTOR])
+            ->select(['id', 'name', 'username', 'email', 'phone', 'role', 'is_wallet_seller', 'wallet_seller_whatsapp', 'country_id', 'city'])
+            ->with('country:id,name');
+
+        if ($request->has('search')) {
+            $s = $request->input('search');
+            $query->where(function ($q) use ($s) {
+                $q->where('name', 'ilike', "%{$s}%")
+                  ->orWhere('email', 'ilike', "%{$s}%")
+                  ->orWhere('username', 'ilike', "%{$s}%");
+            });
+        }
+
+        $users = $query->orderByDesc('is_wallet_seller')
+            ->orderBy('name')
+            ->paginate($request->input('per_page', 30));
+
+        return response()->json([
+            'message' => 'success',
+            'users' => $users,
+        ]);
+    }
+
+    /**
      * GET /wallet/all — Admin: list all wallets
      */
     public function allWallets(Request $request): JsonResponse

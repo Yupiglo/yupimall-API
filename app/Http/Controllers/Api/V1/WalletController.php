@@ -53,6 +53,7 @@ class WalletController extends Controller
 
     /**
      * POST /wallet/recharge — Admin only
+     * Accepts wallet_id OR user_id (auto-creates wallet if needed)
      */
     public function recharge(Request $request): JsonResponse
     {
@@ -62,7 +63,8 @@ class WalletController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'wallet_id' => 'required|exists:wallets,id',
+            'wallet_id' => 'required_without:user_id|exists:wallets,id',
+            'user_id' => 'required_without:wallet_id|exists:users,id',
             'amount' => 'required|numeric|min:0.01',
         ]);
 
@@ -71,11 +73,21 @@ class WalletController extends Controller
         }
 
         try {
-            $wallet = $this->walletService->rechargeWallet(
-                $request->input('wallet_id'),
+            if ($request->has('user_id')) {
+                $targetUser = User::findOrFail($request->input('user_id'));
+                $wallet = $this->walletService->getOrCreateWallet($targetUser);
+            } else {
+                $wallet = Wallet::findOrFail($request->input('wallet_id'));
+            }
+
+            $wallet->credit(
                 (float) $request->input('amount'),
-                $user->id
+                'recharge',
+                null,
+                "Recharge par admin #{$user->id}"
             );
+
+            $wallet->refresh();
 
             return response()->json([
                 'message' => 'Wallet rechargé avec succès.',
@@ -83,6 +95,11 @@ class WalletController extends Controller
                     'id' => $wallet->id,
                     'balance' => $wallet->balance,
                     'currency' => $wallet->currency,
+                    'user' => $wallet->user ? [
+                        'id' => $wallet->user->id,
+                        'name' => $wallet->user->name,
+                        'role' => $wallet->user->role,
+                    ] : null,
                 ],
             ]);
         } catch (\Exception $e) {

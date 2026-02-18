@@ -22,6 +22,7 @@ class Order extends Model
         'stockist',
         'order_status',
         'payment_method',
+        'wallet_pin_id',
         'is_paid',
         'is_delivered',
         'total_order_price',
@@ -66,5 +67,10 @@ class Order extends Model
     public function items(): HasMany
     {
         return $this->hasMany(OrderItem::class);
+    }
+
+    public function walletPin(): BelongsTo
+    {
+        return $this->belongsTo(WalletPin::class);
     }
 }

@@ -26,6 +26,8 @@ use App\Http\Controllers\Api\V1\StockExitController;
 use App\Http\Controllers\Api\V1\CountryController;
 use App\Http\Controllers\Api\V1\RegistrationController;
 use App\Http\Controllers\Api\V1\OperationalStatsController;
+use App\Http\Controllers\Api\V1\WalletController;
+use App\Http\Controllers\Api\V1\ExchangeRateController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health', function () {
@@ -253,4 +255,26 @@ Route::prefix('v1')->group(function () {
     Route::prefix('sendemail')->group(function () {
         Route::post('/', [SendEmailController::class, 'store']);
     });
+
+    // Wallet routes
+    Route::prefix('wallet')->group(function () {
+        Route::get('/sellers', [WalletController::class, 'sellers']);
+
+        Route::middleware('auth:sanctum')->group(function () {
+            Route::get('/balance', [WalletController::class, 'balance']);
+            Route::get('/transactions', [WalletController::class, 'transactions']);
+            Route::get('/all', [WalletController::class, 'allWallets']);
+            Route::get('/transactions/all', [WalletController::class, 'allTransactions']);
+            Route::post('/recharge', [WalletController::class, 'recharge']);
+            Route::post('/treasury/generate', [WalletController::class, 'treasuryGenerate']);
+            Route::post('/pins/generate', [WalletController::class, 'generatePin']);
+            Route::post('/pins/validate', [WalletController::class, 'validatePin']);
+            Route::post('/pins/redeem', [WalletController::class, 'redeemPin']);
+            Route::get('/pins/history', [WalletController::class, 'pinHistory']);
+        });
+    });
+
+    // Exchange rates
+    Route::get('/exchange-rates', [ExchangeRateController::class, 'index']);
+    Route::post('/exchange-rates', [ExchangeRateController::class, 'store'])->middleware('auth:sanctum');
 });

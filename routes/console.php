@@ -4,6 +4,7 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -63,3 +64,5 @@ Artisan::command('app:purge-catalog {--with-orders : Also purge orders/order_ite
 
     $this->info('Purge complete.');
 })->purpose('Purge demo/catalog data while keeping users/admin');
+
+Schedule::command('wallet:expire-pins')->everyMinute();

@@ -10,8 +10,9 @@ return new class extends Migration {
      */
     public function up(): void
     {
-        // Drop the check constraint that was created when payment_method was an enum
-        DB::statement('ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_payment_method_check');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_payment_method_check');
+        }
     }
 
     /**

@@ -47,6 +47,8 @@ class User extends Authenticatable
         'address',
         'city',
         'image_url',
+        'is_wallet_seller',
+        'wallet_seller_whatsapp',
     ];
 
     /**
@@ -69,7 +71,14 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_wallet_seller' => 'boolean',
         ];
+    }
+
+    public function wallet(): HasOne
+    {
+        return $this->hasOne(Wallet::class, 'owner_id')
+                     ->where('owner_type', 'user');
     }
 
     public function cart(): HasOne

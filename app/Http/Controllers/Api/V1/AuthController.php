@@ -40,7 +40,8 @@ class AuthController extends Controller
             'responseMsg' => 'Login successful',
             'user' => [
                 'id' => $user->id,
-                'username' => $user->name, // matches Node behavior that returns name as username
+                'name' => $user->name,
+                'username' => $user->name,
                 'email' => $user->email,
                 'token' => $token,
                 'role' => $user->role ?? 'consumer',

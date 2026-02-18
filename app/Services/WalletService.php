@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Order;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletPin;
@@ -12,9 +13,6 @@ use Carbon\Carbon;
 
 class WalletService
 {
-    /**
-     * Get or lazily create a wallet for a user.
-     */
     public function getOrCreateWallet(User $user): Wallet
     {
         return Wallet::firstOrCreate(
@@ -24,8 +22,7 @@ class WalletService
     }
 
     /**
-     * Generate a 6-char alphanumeric PIN, debiting the seller's wallet.
-     * Returns the PIN model with the plaintext code.
+     * Generate a 6-char PIN, debiting the seller's wallet atomically.
      */
     public function generatePin(Wallet $wallet, float $amount): WalletPin
     {
@@ -33,19 +30,21 @@ class WalletService
             throw new \InvalidArgumentException('Le montant doit être supérieur à 0.');
         }
 
-        if (!$wallet->hasSufficientBalance($amount)) {
-            throw new \RuntimeException('Solde insuffisant pour générer ce PIN.');
-        }
-
         return DB::transaction(function () use ($wallet, $amount) {
+            $locked = Wallet::lockForUpdate()->find($wallet->id);
+
+            if ($locked->balance < $amount) {
+                throw new \RuntimeException('Solde insuffisant pour générer ce PIN.');
+            }
+
             $code = $this->generateUniqueCode();
 
-            $wallet->debit($amount, 'pin_generation', null, "Génération PIN {$code}");
+            $locked->debit($amount, 'pin_generation', null, "Génération PIN {$code}");
 
             $pin = WalletPin::create([
                 'code' => $code,
-                'seller_wallet_id' => $wallet->id,
-                'seller_id' => $wallet->owner_id,
+                'seller_wallet_id' => $locked->id,
+                'seller_id' => $locked->owner_id,
                 'amount' => $amount,
                 'amount_used' => 0,
                 'status' => 'active',
@@ -53,22 +52,21 @@ class WalletService
             ]);
 
             $pin->getConnection()->table('wallet_transactions')
-                ->where('wallet_id', $wallet->id)
+                ->where('wallet_id', $locked->id)
                 ->where('reference_type', 'pin_generation')
                 ->whereNull('reference_id')
                 ->latest('id')
                 ->limit(1)
                 ->update(['reference_id' => $pin->id]);
 
-            Log::info("PIN {$code} generated for wallet #{$wallet->id}, amount: \${$amount}");
+            Log::info("PIN {$code} generated for wallet #{$locked->id}, amount: \${$amount}");
 
             return $pin;
         });
     }
 
     /**
-     * Validate a PIN without consuming it.
-     * Returns the PIN if valid, null otherwise.
+     * Validate a PIN without consuming it (read-only check).
      */
     public function validatePin(int $sellerId, string $pinCode): ?WalletPin
     {
@@ -76,15 +74,7 @@ class WalletService
             ->where('seller_id', $sellerId)
             ->first();
 
-        if (!$pin) {
-            return null;
-        }
-
-        if ($pin->status !== 'active') {
-            return null;
-        }
-
-        if ($pin->isExpired()) {
+        if (!$pin || $pin->status !== 'active' || $pin->isExpired()) {
             return null;
         }
 
@@ -92,24 +82,28 @@ class WalletService
     }
 
     /**
-     * Redeem a PIN to pay for an order.
-     * Marks PIN as used, refunds remainder to seller if order total < PIN amount.
+     * Redeem a PIN atomically: lock PIN row, mark used, update order, refund remainder.
      */
     public function redeemPin(int $sellerId, string $pinCode, int $orderId, float $orderTotal): WalletPin
     {
-        $pin = $this->validatePin($sellerId, $pinCode);
+        return DB::transaction(function () use ($sellerId, $pinCode, $orderId, $orderTotal) {
+            $pin = WalletPin::where('code', strtoupper($pinCode))
+                ->where('seller_id', $sellerId)
+                ->lockForUpdate()
+                ->first();
 
-        if (!$pin) {
-            throw new \RuntimeException('PIN invalide, expiré ou déjà utilisé.');
-        }
+            if (!$pin || $pin->status !== 'active' || $pin->isExpired()) {
+                throw new \RuntimeException('PIN invalide, expiré ou déjà utilisé.');
+            }
 
-        if ($orderTotal > (float) $pin->amount) {
-            throw new \RuntimeException('Le montant de la commande dépasse le montant du PIN.');
-        }
+            if ($orderTotal > (float) $pin->amount) {
+                throw new \RuntimeException('Le montant de la commande dépasse le montant du PIN.');
+            }
 
-        return DB::transaction(function () use ($pin, $orderId, $orderTotal) {
             $amountUsed = $orderTotal;
             $pin->markAsUsed($orderId, $amountUsed);
+
+            Order::where('id', $orderId)->update(['wallet_pin_id' => $pin->id]);
 
             $remainder = $pin->getRemainder();
             if ($remainder > 0) {
@@ -128,35 +122,45 @@ class WalletService
     }
 
     /**
-     * Expire stale PINs and refund the full amount to seller wallets.
-     * Called by the scheduler every minute.
+     * Expire stale PINs atomically and refund full amount to sellers.
      */
     public function expireStalePins(): int
     {
-        $expiredPins = WalletPin::expired()->get();
         $count = 0;
 
-        foreach ($expiredPins as $pin) {
-            DB::transaction(function () use ($pin) {
-                $pin->update(['status' => 'expired']);
+        $expiredPinIds = WalletPin::expired()->pluck('id');
 
-                $pin->sellerWallet->refund(
-                    (float) $pin->amount,
-                    'pin_expiry',
-                    $pin->id,
-                    "Remboursement PIN expiré {$pin->code}"
-                );
+        foreach ($expiredPinIds as $pinId) {
+            try {
+                DB::transaction(function () use ($pinId) {
+                    $pin = WalletPin::lockForUpdate()->find($pinId);
 
-                Log::info("PIN {$pin->code} expired, refunded \${$pin->amount} to wallet #{$pin->seller_wallet_id}");
-            });
-            $count++;
+                    if (!$pin || $pin->status !== 'active') {
+                        return;
+                    }
+
+                    $pin->update(['status' => 'expired']);
+
+                    $pin->sellerWallet->refund(
+                        (float) $pin->amount,
+                        'pin_expiry',
+                        $pin->id,
+                        "Remboursement PIN expiré {$pin->code}"
+                    );
+
+                    Log::info("PIN {$pin->code} expired, refunded \${$pin->amount} to wallet #{$pin->seller_wallet_id}");
+                });
+                $count++;
+            } catch (\Throwable $e) {
+                Log::error("Failed to expire PIN #{$pinId}: {$e->getMessage()}");
+            }
         }
 
         return $count;
     }
 
     /**
-     * Admin recharges a user's wallet.
+     * Admin recharges a wallet.
      */
     public function rechargeWallet(int $walletId, float $amount, int $adminId): Wallet
     {
@@ -166,12 +170,7 @@ class WalletService
 
         $wallet = Wallet::findOrFail($walletId);
 
-        $wallet->credit(
-            $amount,
-            'recharge',
-            null,
-            "Recharge par admin #{$adminId}"
-        );
+        $wallet->credit($amount, 'recharge', null, "Recharge par admin #{$adminId}");
 
         Log::info("Wallet #{$walletId} recharged with \${$amount} by admin #{$adminId}");
 
@@ -179,7 +178,7 @@ class WalletService
     }
 
     /**
-     * Dev generates treasury dollars and credits the admin wallet.
+     * Dev generates treasury dollars for an admin wallet.
      */
     public function generateTreasury(float $amount, int $devId, int $adminUserId): Wallet
     {
@@ -190,29 +189,18 @@ class WalletService
         $adminUser = User::findOrFail($adminUserId);
         $wallet = $this->getOrCreateWallet($adminUser);
 
-        $wallet->credit(
-            $amount,
-            'treasury',
-            null,
-            "Trésorerie générée par dev #{$devId}"
-        );
+        $wallet->credit($amount, 'treasury', null, "Trésorerie générée par dev #{$devId}");
 
         Log::info("Treasury \${$amount} generated by dev #{$devId} for admin #{$adminUserId}");
 
         return $wallet->fresh();
     }
 
-    /**
-     * Check if a user is allowed to make purchases (DEV role is blocked).
-     */
     public function checkPurchaseAllowance(User $user): bool
     {
         return $user->role !== User::ROLE_DEV;
     }
 
-    /**
-     * Generate a unique 6-character alphanumeric code.
-     */
     private function generateUniqueCode(): string
     {
         do {

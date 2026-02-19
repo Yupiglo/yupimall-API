@@ -135,9 +135,8 @@ class OperationalStatsController extends Controller
 
     private function getStockistStats($user)
     {
-        // For a stockist, orders assigned to them or created by them (if that's the logic)
-        // Usually, orders where stockist_id = user->id
-        $orderQuery = Order::query()->where('stockist_id', $user->id);
+        // For a stockist, orders assigned to them (stockist column stores user id)
+        $orderQuery = Order::query()->where('stockist', $user->id);
 
         $stats = [
             'totalOrders' => $orderQuery->count(),

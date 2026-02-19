@@ -269,6 +269,46 @@ class OrderController extends Controller
     }
 
     /**
+     * Check stock availability for cart items (public, no auth)
+     * Returns list of products with insufficient stock so frontend can block checkout early
+     */
+    public function checkStock(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.product_id' => ['required'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Validation error', 'errors' => $validator->errors()], 422);
+        }
+
+        $insufficient = [];
+        foreach ($request->input('items') as $item) {
+            $product = Product::find($item['product_id']);
+            if (!$product) {
+                $insufficient[] = ['product_id' => $item['product_id'], 'title' => 'Inconnu', 'available' => 0, 'requested' => $item['quantity']];
+                continue;
+            }
+            if ($product->quantity < $item['quantity']) {
+                $insufficient[] = [
+                    'product_id' => $product->id,
+                    'title' => $product->title,
+                    'available' => $product->quantity,
+                    'requested' => $item['quantity'],
+                ];
+            }
+        }
+
+        return response()->json([
+            'message' => 'success',
+            'stock_ok' => empty($insufficient),
+            'insufficient' => $insufficient,
+        ], 200);
+    }
+
+    /**
      * Store a guest order (no authentication required)
      * Accepts cart items directly from localStorage
      */

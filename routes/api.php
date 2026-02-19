@@ -260,6 +260,10 @@ Route::prefix('v1')->group(function () {
     Route::prefix('wallet')->group(function () {
         Route::get('/sellers', [WalletController::class, 'sellers']);
 
+        // Public: checkout (acheteur peut être invité)
+        Route::post('/pins/validate', [WalletController::class, 'validatePin']);
+        Route::post('/pins/redeem', [WalletController::class, 'redeemPin']);
+
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/balance', [WalletController::class, 'balance']);
             Route::get('/transactions', [WalletController::class, 'transactions']);
@@ -268,8 +272,6 @@ Route::prefix('v1')->group(function () {
             Route::post('/recharge', [WalletController::class, 'recharge']);
             Route::post('/treasury/generate', [WalletController::class, 'treasuryGenerate']);
             Route::post('/pins/generate', [WalletController::class, 'generatePin']);
-            Route::post('/pins/validate', [WalletController::class, 'validatePin']);
-            Route::post('/pins/redeem', [WalletController::class, 'redeemPin']);
             Route::get('/pins/history', [WalletController::class, 'pinHistory']);
             Route::get('/pins/all', [WalletController::class, 'allPins']);
             Route::post('/pins/{id}/refund', [WalletController::class, 'refundPin']);

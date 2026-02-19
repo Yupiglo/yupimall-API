@@ -17,6 +17,7 @@ class WalletPin extends Model
         'amount_used',
         'status',
         'used_by_order_id',
+        'used_by_registration_id',
         'expires_at',
         'used_at',
     ];
@@ -43,6 +44,11 @@ class WalletPin extends Model
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class, 'used_by_order_id');
+    }
+
+    public function registration(): BelongsTo
+    {
+        return $this->belongsTo(Registration::class, 'used_by_registration_id');
     }
 
     // --- Scopes ---
@@ -76,6 +82,16 @@ class WalletPin extends Model
         $this->update([
             'status' => 'used',
             'used_by_order_id' => $orderId,
+            'amount_used' => $amountUsed,
+            'used_at' => Carbon::now(),
+        ]);
+    }
+
+    public function markAsUsedForRegistration(int $registrationId, float $amountUsed): void
+    {
+        $this->update([
+            'status' => 'used',
+            'used_by_registration_id' => $registrationId,
             'amount_used' => $amountUsed,
             'used_at' => Carbon::now(),
         ]);

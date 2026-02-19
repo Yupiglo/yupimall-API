@@ -24,6 +24,14 @@ class Registration extends Model
         'password',
         'created_by',
         'requested_role',
+        'wallet_pin_id',
+        'package_id',
+        'package_price',
     ];
+
+    public function walletPin()
+    {
+        return $this->belongsTo(WalletPin::class, 'wallet_pin_id');
+    }
 
 }

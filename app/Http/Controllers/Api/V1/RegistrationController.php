@@ -45,6 +45,8 @@ class RegistrationController extends Controller
             'city' => 'required|string|max:255',
             'country' => 'required|string|max:255',
             'plan' => 'required|string|max:50',
+            'package_id' => 'sometimes|string|max:50',
+            'package_price' => 'sometimes|numeric|min:0',
             'payment_method' => 'required|string|max:50',
             'password' => 'required|string|min:8',
             'sponsor_id' => 'nullable|string|max:50',
@@ -67,9 +69,15 @@ class RegistrationController extends Controller
             $data['requested_role'] = 'member';
         }
 
-        // Bypass payment for now - mark as paid
-        // TODO: Integrate actual payment gateway later
-        $data['payment_status'] = 'paid'; // Simulated - will be replaced with actual payment check
+        // Use package_id if provided, otherwise fallback to plan
+        if (isset($data['package_id']) && !empty($data['package_id'])) {
+            $data['plan'] = $data['package_id'];
+        }
+
+        // Payment status will be set to 'paid' after PIN redemption
+        // For now, mark as pending - will be updated when PIN is redeemed
+        // If payment_method is wallet or wallet_pin, keep as pending until PIN redemption
+        $data['payment_status'] = 'pending';
 
         if (auth('sanctum')->check()) {
             $data['created_by'] = auth('sanctum')->id();

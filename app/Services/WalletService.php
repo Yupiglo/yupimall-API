@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Order;
+use App\Models\Registration;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletPin;
@@ -116,6 +117,49 @@ class WalletService
             }
 
             Log::info("PIN {$pin->code} redeemed for order #{$orderId}, used: \${$amountUsed}, refunded: \${$remainder}");
+
+            return $pin->fresh();
+        });
+    }
+
+    /**
+     * Redeem a PIN for a registration atomically: lock PIN row, mark used, update registration, refund remainder.
+     */
+    public function redeemPinForRegistration(int $sellerId, string $pinCode, int $registrationId, float $registrationTotal): WalletPin
+    {
+        return DB::transaction(function () use ($sellerId, $pinCode, $registrationId, $registrationTotal) {
+            $pin = WalletPin::where('code', strtoupper($pinCode))
+                ->where('seller_id', $sellerId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$pin || $pin->status !== 'active' || $pin->isExpired()) {
+                throw new \RuntimeException('PIN invalide, expiré ou déjà utilisé.');
+            }
+
+            if ($registrationTotal > (float) $pin->amount) {
+                throw new \RuntimeException('Le montant de l\'inscription dépasse le montant du PIN.');
+            }
+
+            $amountUsed = $registrationTotal;
+            $pin->markAsUsedForRegistration($registrationId, $amountUsed);
+
+            Registration::where('id', $registrationId)->update([
+                'wallet_pin_id' => $pin->id,
+                'payment_status' => 'paid'
+            ]);
+
+            $remainder = $pin->getRemainder();
+            if ($remainder > 0) {
+                $pin->sellerWallet->refund(
+                    $remainder,
+                    'pin_remainder',
+                    $pin->id,
+                    "Remboursement reste PIN {$pin->code} (inscription #{$registrationId})"
+                );
+            }
+
+            Log::info("PIN {$pin->code} redeemed for registration #{$registrationId}, used: \${$amountUsed}, refunded: \${$remainder}");
 
             return $pin->fresh();
         });

@@ -226,13 +226,15 @@ class WalletController extends Controller
 
     /**
      * POST /wallet/pins/redeem
+     * Accepts either order_id OR registration_id (mutually exclusive)
      */
     public function redeemPin(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'seller_id' => 'required|exists:users,id',
             'pin_code' => 'required|string|size:6',
-            'order_id' => 'required|exists:orders,id',
+            'order_id' => 'required_without:registration_id|exists:orders,id',
+            'registration_id' => 'required_without:order_id|exists:registrations,id',
             'order_total' => 'required|numeric|min:0.01',
         ]);
 
@@ -241,12 +243,27 @@ class WalletController extends Controller
         }
 
         try {
-            $pin = $this->walletService->redeemPin(
-                (int) $request->input('seller_id'),
-                $request->input('pin_code'),
-                (int) $request->input('order_id'),
-                (float) $request->input('order_total')
-            );
+            $sellerId = (int) $request->input('seller_id');
+            $pinCode = $request->input('pin_code');
+            $total = (float) $request->input('order_total');
+
+            if ($request->has('registration_id')) {
+                // Registration flow
+                $pin = $this->walletService->redeemPinForRegistration(
+                    $sellerId,
+                    $pinCode,
+                    (int) $request->input('registration_id'),
+                    $total
+                );
+            } else {
+                // Order flow (existing)
+                $pin = $this->walletService->redeemPin(
+                    $sellerId,
+                    $pinCode,
+                    (int) $request->input('order_id'),
+                    $total
+                );
+            }
 
             return response()->json([
                 'message' => 'PIN utilisé avec succès.',

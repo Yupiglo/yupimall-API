@@ -263,6 +263,73 @@ class WalletController extends Controller
     }
 
     /**
+     * POST /wallet/pins/{id}/refund — Admin only
+     * Rembourse un PIN qui n'a pas pu être utilisé et recrédite le wallet du vendeur.
+     */
+    public function refundPin(Request $request, int $id): JsonResponse
+    {
+        $user = $request->user();
+        if (!in_array($user->role, [User::ROLE_ADMIN, User::ROLE_DEV])) {
+            return response()->json(['message' => 'Non autorisé. Réservé aux admins.'], 403);
+        }
+
+        $pin = WalletPin::with('sellerWallet')->find($id);
+        if (!$pin) {
+            return response()->json(['message' => 'PIN introuvable.'], 404);
+        }
+
+        $reason = $request->input('reason', '');
+
+        try {
+            $pin = $this->walletService->refundPin($pin, $user->id, $reason);
+
+            return response()->json([
+                'message' => 'PIN remboursé avec succès. Le vendeur peut générer un nouveau PIN.',
+                'pin' => [
+                    'id' => $pin->id,
+                    'code' => $pin->code,
+                    'amount' => $pin->amount,
+                    'status' => $pin->status,
+                ],
+                'wallet' => [
+                    'id' => $pin->sellerWallet->id,
+                    'balance' => $pin->sellerWallet->fresh()->balance,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['message' => $e->getMessage()], 400);
+        }
+    }
+
+    /**
+     * GET /wallet/pins/all — Admin: list all PINs (for refund management)
+     */
+    public function allPins(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!in_array($user->role, [User::ROLE_ADMIN, User::ROLE_DEV])) {
+            return response()->json(['message' => 'Non autorisé.'], 403);
+        }
+
+        $query = WalletPin::with('seller:id,name,username,email')
+            ->orderByDesc('created_at');
+
+        if ($request->has('seller_id')) {
+            $query->where('seller_id', $request->input('seller_id'));
+        }
+        if ($request->has('status')) {
+            $query->where('status', $request->input('status'));
+        }
+
+        $pins = $query->paginate($request->input('per_page', 30));
+
+        return response()->json([
+            'message' => 'success',
+            'pins' => $pins,
+        ]);
+    }
+
+    /**
      * GET /wallet/pins/history
      */
     public function pinHistory(Request $request): JsonResponse

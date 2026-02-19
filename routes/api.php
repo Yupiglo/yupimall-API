@@ -271,6 +271,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/pins/validate', [WalletController::class, 'validatePin']);
             Route::post('/pins/redeem', [WalletController::class, 'redeemPin']);
             Route::get('/pins/history', [WalletController::class, 'pinHistory']);
+            Route::get('/pins/all', [WalletController::class, 'allPins']);
+            Route::post('/pins/{id}/refund', [WalletController::class, 'refundPin']);
             Route::post('/sellers/update', [WalletController::class, 'updateSeller']);
             Route::get('/sellers/eligible', [WalletController::class, 'eligibleSellers']);
         });

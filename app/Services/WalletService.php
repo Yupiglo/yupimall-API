@@ -122,6 +122,50 @@ class WalletService
     }
 
     /**
+     * Manually refund a PIN that couldn't be used (admin action).
+     * Returns the amount to the seller's wallet so they can generate a new PIN.
+     * Only works for PINs that are active or expired (never used).
+     */
+    public function refundPin(WalletPin $pin, int $adminId, string $reason = ''): WalletPin
+    {
+        if ($pin->status === 'refunded') {
+            throw new \RuntimeException('Ce PIN a déjà été remboursé.');
+        }
+        if ($pin->status === 'used') {
+            throw new \RuntimeException('Ce PIN a déjà été utilisé. Le reste éventuel a été remboursé automatiquement.');
+        }
+        if ($pin->status !== 'active' && $pin->status !== 'expired') {
+            throw new \RuntimeException('Ce PIN n\'est pas éligible au remboursement manuel.');
+        }
+
+        $amountToRefund = (float) $pin->amount;
+        if ($amountToRefund <= 0) {
+            throw new \RuntimeException('Montant du PIN invalide.');
+        }
+
+        return DB::transaction(function () use ($pin, $amountToRefund, $adminId, $reason) {
+            $locked = WalletPin::lockForUpdate()->find($pin->id);
+
+            if ($locked->status === 'refunded') {
+                throw new \RuntimeException('Ce PIN a déjà été remboursé.');
+            }
+
+            $locked->sellerWallet->refund(
+                $amountToRefund,
+                'pin_manual_refund',
+                $locked->id,
+                "Remboursement manuel PIN {$locked->code} (admin #{$adminId})" . ($reason ? " - {$reason}" : '')
+            );
+
+            $locked->update(['status' => 'refunded']);
+
+            Log::info("PIN {$locked->code} manually refunded \${$amountToRefund} to wallet #{$locked->seller_wallet_id} by admin #{$adminId}");
+
+            return $locked->fresh();
+        });
+    }
+
+    /**
      * Expire stale PINs atomically and refund full amount to sellers.
      */
     public function expireStalePins(): int
